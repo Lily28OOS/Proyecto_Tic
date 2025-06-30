@@ -1,0 +1,7 @@
+opencv-python
+Pillow
+psycopg2
+numpy
+tf-keras
+deepface
+pandas
