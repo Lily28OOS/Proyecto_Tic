@@ -8,7 +8,7 @@ from database import connect_db, load_faces_from_db
 from register import show_registration_form
 
 class FaceRecognitionApp:
-    def __init__(self, root):
+    def __init__(self, root, registration_mode=False):  # <-- parámetro agregado
         self.root = root
         self.root.title("Reconocimiento Facial")
         self.root.geometry("800x600")
@@ -16,6 +16,7 @@ class FaceRecognitionApp:
         self.conn, self.c = connect_db()
         self.face_db = load_faces_from_db(self.c)
         self.registration_form_open = False
+        self.registration_mode = registration_mode  # <-- guardamos el modo
 
         self.cap = cv2.VideoCapture(0)
         self.canvas = tk.Canvas(self.root, width=640, height=480)
@@ -77,7 +78,8 @@ class FaceRecognitionApp:
             self.name_label.config(text=f"Nombre: {recognized_name}")
         else:
             self.name_label.config(text="Nombre: No reconocido")
-            show_registration_form(self.root, descriptor, face_image, self.face_db, self.c, self.conn)
+            if self.registration_mode:  # <-- solo si estamos en modo registro
+                show_registration_form(self.root, descriptor, face_image, self.face_db, self.c, self.conn)
 
         self.detecting = False  # Finaliza el periodo de detección
 
