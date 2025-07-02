@@ -1,8 +1,5 @@
 # main.py
-import tkinter as tk
-from app import FaceRecognitionApp
+from selection import SelectionWindow
 
-# Crear la ventana principal de Tkinter
-root = tk.Tk()
-app = FaceRecognitionApp(root)
-root.mainloop()
+if __name__ == "__main__":
+    SelectionWindow()
