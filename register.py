@@ -1,4 +1,4 @@
-# interfaz.py
+# registro.py
 import cv2
 import tkinter as tk
 from PIL import Image, ImageTk

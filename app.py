@@ -3,9 +3,10 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk
 import tkinter as tk
+from selection import option
 from face_recognition import get_face_descriptor, detect_faces
 from database import connect_db, load_faces_from_db
-from interface import show_registration_form
+from register import show_registration_form
 
 class FaceRecognitionApp:
     def __init__(self, root):
