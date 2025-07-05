@@ -5,7 +5,7 @@ import numpy as np
 # Conectar a la base de datos PostgreSQL (con contraseña root)
 def connect_db():
     conn = psycopg2.connect(
-        dbname="biometria", user="postgres", password="admin", host="localhost", port="5433"
+        dbname="biometria", user="postgres", password="root", host="localhost", port="5433"
     )
     c = conn.cursor()
     return conn, c

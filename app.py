@@ -3,12 +3,13 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk
 import tkinter as tk
+from tkinter import messagebox
 from face_recognition import get_face_descriptor, detect_faces
 from database import connect_db, load_faces_from_db
 from register import show_registration_form
 
 class FaceRecognitionApp:
-    def __init__(self, root, registration_mode=False):  # <-- parámetro agregado
+    def __init__(self, root, registration_mode=False):
         self.root = root
         self.root.title("Reconocimiento Facial")
         self.root.geometry("800x600")
@@ -16,7 +17,7 @@ class FaceRecognitionApp:
         self.conn, self.c = connect_db()
         self.face_db = load_faces_from_db(self.c)
         self.registration_form_open = False
-        self.registration_mode = registration_mode  # <-- guardamos el modo
+        self.registration_mode = registration_mode
 
         self.cap = cv2.VideoCapture(0)
         self.canvas = tk.Canvas(self.root, width=640, height=480)
@@ -27,47 +28,76 @@ class FaceRecognitionApp:
 
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         self.photo = None
-        self.detecting = False  # Nueva bandera para controlar el retraso
 
+        # Botón para capturar la foto manualmente
+        self.capture_button = tk.Button(self.root, text="Tomar foto", command=self.capture_image)
+        self.capture_button.pack(pady=10)
+
+        # Iniciar solo el bucle de visualización (sin reconocimiento)
         self.update_frame()
 
     def update_frame(self):
         ret, frame = self.cap.read()
-        if ret:
-            self.detect_faces(frame)
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frame_image = Image.fromarray(frame_rgb)
-            self.photo = ImageTk.PhotoImage(image=frame_image)
-            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
-            self.root.after(10, self.update_frame)
-        else:
-            print("Error al acceder a la cámara.")
-
-    def detect_faces(self, frame):
-        if self.detecting:  # Si ya se está detectando, no hacer nada
+        if not ret:
             return
+
+        frame = cv2.flip(frame, 1)
+
+        # Dibujar silueta tenue
+        overlay = frame.copy()
+        center_x, center_y = frame.shape[1] // 2, frame.shape[0] // 2
+        axes_length = (150, 200)
+        color = (128, 128, 128)
+        thickness = 2
+        alpha = 0.3
+
+        cv2.ellipse(overlay, (center_x, center_y), axes_length, 0, 0, 360, color, thickness)
+        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+
+        # Mostrar en canvas
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(frame_rgb)
+        imgtk = ImageTk.PhotoImage(image=img)
+        self.canvas.imgtk = imgtk
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=imgtk)
+
+        # Repetir cada 15 ms
+        self.root.after(15, self.update_frame)
+
+    def capture_image(self):
+        ret, frame = self.cap.read()
+        if not ret:
+            messagebox.showerror("Error", "No se pudo acceder a la cámara.")
+            return
+
+        frame = cv2.flip(frame, 1)
 
         faces = detect_faces(frame, self.face_cascade)
 
-        if len(faces) > 0:
-            faces = sorted(faces, key=lambda face: self.distance_to_center(face, frame.shape))
-            x, y, w, h = faces[0]
-            face = frame[y:y+h, x:x+w]
-            descriptor = get_face_descriptor(face)
+        if not faces:
+            messagebox.showwarning("Advertencia", "No se detectó ningún rostro.")
+            return
 
-            self.detecting = True  # Establecer que estamos en un periodo de espera
+        # Seleccionar la cara más grande
+        faces = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
+        x, y, w, h = faces[0]
+        face_img = frame[y:y+h, x:x+w]
+        descriptor = get_face_descriptor(face_img)
 
-            # Iniciar el temporizador de x segundos
-            self.root.after(1000, self.recognize_face, descriptor, face)
+        # Actualizar imagen en canvas (opcional, muestra la imagen capturada)
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(frame_rgb)
+        imgtk = ImageTk.PhotoImage(img)
+        self.canvas.imgtk = imgtk
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=imgtk)
 
-            # Dibuja un rectángulo en la cara detectada
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
+        # Verificar si el rostro es reconocido
+        self.recognize_face(descriptor, face_img)
 
     def recognize_face(self, descriptor, face_image):
         recognized_name = None
         min_distance = float('inf')
 
-        # Compara el rostro detectado con los rostros en la base de datos
         for name, saved_descriptor in self.face_db:
             distance = np.linalg.norm(saved_descriptor - descriptor)
             if distance < min_distance:
@@ -78,16 +108,8 @@ class FaceRecognitionApp:
             self.name_label.config(text=f"Nombre: {recognized_name}")
         else:
             self.name_label.config(text="Nombre: No reconocido")
-            if self.registration_mode:  # <-- solo si estamos en modo registro
+            if self.registration_mode:
                 show_registration_form(self.root, descriptor, face_image, self.face_db, self.c, self.conn)
-
-        self.detecting = False  # Finaliza el periodo de detección
-
-    def distance_to_center(self, face, frame_shape):
-        x, y, w, h = face
-        face_center = (x + w // 2, y + h // 2)
-        frame_center = (frame_shape[1] // 2, frame_shape[0] // 2)
-        return np.linalg.norm(np.array(face_center) - np.array(frame_center))
 
     def quit(self):
         self.cap.release()
