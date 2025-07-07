@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS eventos_reconocimiento (
 
 -- Alterar la tabla personas para agregar cédula, nombres y apellidos con las restricciones
 ALTER TABLE personas
-ADD COLUMN cedula VARCHAR(10) CHECK (cedula ~ '^\d{0,9}$') NOT NULL,
+ADD COLUMN cedula VARCHAR(10) CHECK (cedula ~ '^\d{10}$') NOT NULL,
 ADD COLUMN nombre2 VARCHAR(25),
 ADD COLUMN apellido1 VARCHAR(25),
 ADD COLUMN apellido2 VARCHAR(25);

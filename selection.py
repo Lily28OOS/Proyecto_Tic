@@ -1,6 +1,8 @@
 # seleccion.py
 import tkinter as tk
 from app import FaceRecognitionApp
+from register import FaceRegister
+from database import connect_db, load_faces_from_db
 
 class SelectionWindow:
     def __init__(self):
@@ -18,8 +20,14 @@ class SelectionWindow:
 
     def open_registration(self):
         self.root.destroy()
+
         root = tk.Tk()
-        app = FaceRecognitionApp(root, registration_mode=True)
+        conn, c = connect_db()
+        face_db = load_faces_from_db(c)
+
+        # Crear la ventana de registro usando FaceRegister
+        app = FaceRegister(root, face_db, c, conn)
+
         root.mainloop()
 
     def open_verification(self):

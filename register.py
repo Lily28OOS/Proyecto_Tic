@@ -1,93 +1,92 @@
 # register.py
 import cv2
 import numpy as np
+from PIL import Image, ImageTk
 import tkinter as tk
 from tkinter import messagebox
-from PIL import Image, ImageTk
 from face_recognition import detect_faces, get_face_descriptor
+from registerform import show_registration_form
 
+class FaceRegister:
+    def __init__(self, root, face_db, c, conn):
+        self.root = root
+        self.face_db = face_db
+        self.c = c
+        self.conn = conn
 
-def show_registration_form(root, descriptor, face_image, face_db, c, conn):
-    if hasattr(root, 'registration_form_open') and root.registration_form_open:
-        return
+        self.cap = cv2.VideoCapture(0)
+        self.canvas = tk.Canvas(root, width=640, height=480)
+        self.canvas.pack()
 
-    root.registration_form_open = True
+        self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
-    email_suffixes = [
-        "@utm.edu.ec",
-        "@gmail.com",
-        "@yahoo.com",
-        "@hotmail.com",
-        "@outlook.com",
-        "@aol.com"
-    ]
+        self.capture_button = tk.Button(root, text="Tomar foto", command=self.capture_image)
+        self.capture_button.pack(pady=10)
 
-    def save_data():
-        nombre1 = entry_nombre1.get()
-        nombre2 = entry_nombre2.get()
-        apellido1 = entry_apellido1.get()
-        apellido2 = entry_apellido2.get()
-        cedula = entry_cedula.get()
-        correo_prefijo = entry_correo_prefijo.get()
-        correo_sufijo = email_suffix_var.get()
-        correo_completo = correo_prefijo + correo_sufijo
+        self.cancel_button = tk.Button(root, text="Cancelar", command=self.cancel)
+        self.cancel_button.pack(pady=5)
 
-        if nombre1 and apellido1 and cedula and correo_prefijo:
-            descriptor_list = descriptor.tolist()
+        self.name_label = tk.Label(root, text="Ajusta tu rostro dentro de la silueta y presiona 'Tomar foto'", font=("Arial", 14))
+        self.name_label.pack(pady=5)
 
-            c.execute("""
-                INSERT INTO personas (cedula, nombre, nombre2, apellido1, apellido2, correo_electronico)
-                VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
-            """, (cedula, nombre1, nombre2, apellido1, apellido2, correo_completo))
-            persona_id = c.fetchone()[0]
+        self.update_frame()
 
-            c.execute("""
-                INSERT INTO codificaciones_faciales (persona_id, codificacion)
-                VALUES (%s, %s)
-            """, (persona_id, descriptor_list))
-            conn.commit()
-            top.destroy()
-            root.registration_form_open = False
+    def update_frame(self):
+        ret, frame = self.cap.read()
+        if not ret:
+            return
 
-    def cancel():
-        top.destroy()
-        root.registration_form_open = False
+        frame = cv2.flip(frame, 1)
 
-    top = tk.Toplevel(root)
-    top.title("Registrar nuevo rostro")
+        overlay = frame.copy()
+        center_x, center_y = frame.shape[1] // 2, frame.shape[0] // 2
+        axes_length = (150, 200)
+        color = (128, 128, 128)
+        thickness = 2
+        alpha = 0.3
 
-    tk.Label(top, text="Cédula").grid(row=0, column=0)
-    tk.Label(top, text="Nombre 1").grid(row=1, column=0)
-    tk.Label(top, text="Nombre 2").grid(row=2, column=0)
-    tk.Label(top, text="Apellido 1").grid(row=3, column=0)
-    tk.Label(top, text="Apellido 2").grid(row=4, column=0)
-    tk.Label(top, text="Correo").grid(row=6, column=0)
+        cv2.ellipse(overlay, (center_x, center_y), axes_length, 0, 0, 360, color, thickness)
+        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
 
-    entry_cedula = tk.Entry(top)
-    entry_nombre1 = tk.Entry(top)
-    entry_nombre2 = tk.Entry(top)
-    entry_apellido1 = tk.Entry(top)
-    entry_apellido2 = tk.Entry(top)
-    entry_correo_prefijo = tk.Entry(top)
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(frame_rgb)
+        imgtk = ImageTk.PhotoImage(image=img)
+        self.canvas.imgtk = imgtk
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=imgtk)
 
-    entry_cedula.grid(row=0, column=1)
-    entry_nombre1.grid(row=1, column=1)
-    entry_nombre2.grid(row=2, column=1)
-    entry_apellido1.grid(row=3, column=1)
-    entry_apellido2.grid(row=4, column=1)
-    entry_correo_prefijo.grid(row=6, column=1)
+        self.root.after(15, self.update_frame)
 
-    email_suffix_var = tk.StringVar()
-    email_suffix_var.set("@utm.edu.ec")
-    suffix_combobox = tk.OptionMenu(top, email_suffix_var, *email_suffixes)
-    suffix_combobox.grid(row=6, column=2)
+    def capture_image(self):
+        ret, frame = self.cap.read()
+        if not ret:
+            messagebox.showerror("Error", "No se pudo acceder a la cámara.")
+            return
 
-    face_rgb = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
-    face_pil = Image.fromarray(cv2.resize(face_rgb, (160, 160)))
-    face_photo = ImageTk.PhotoImage(face_pil)
-    image_label = tk.Label(top, image=face_photo)
-    image_label.image = face_photo
-    image_label.grid(row=0, column=2, rowspan=6, padx=10, pady=10)
+        frame = cv2.flip(frame, 1)
+        faces = detect_faces(frame, self.face_cascade)
 
-    tk.Button(top, text="Guardar", command=save_data).grid(row=7, column=1)
-    tk.Button(top, text="Cancelar", command=cancel).grid(row=7, column=2)
+        if len(faces) == 0:
+            messagebox.showwarning("Advertencia", "No se detectó ningún rostro.")
+            return
+
+        x, y, w, h = faces[0]
+        face_img = frame[y:y+h, x:x+w]
+        descriptor = get_face_descriptor(face_img)
+
+        # Verificar duplicado
+        for _, existing_descriptor in self.face_db:
+            distance = np.linalg.norm(existing_descriptor - descriptor)
+            if distance < 0.9:
+                messagebox.showinfo("Ya registrado", "Este rostro ya está registrado en el sistema.")
+                return
+
+        self.cap.release()
+        show_registration_form(self.root, descriptor, face_img, self.face_db, self.c, self.conn)
+
+    def cancel(self):
+        self.cap.release()
+        self.root.destroy()
+
+        # Importar aquí para evitar el ciclo
+        from selection import SelectionWindow
+        SelectionWindow()
