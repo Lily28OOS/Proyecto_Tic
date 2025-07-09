@@ -4,4 +4,6 @@ psycopg2
 numpy
 tf-keras
 deepface
+retina-face
+insightface
 pandas

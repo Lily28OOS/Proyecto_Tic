@@ -29,8 +29,6 @@ class FaceRecognitionApp:
         self.name_label = tk.Label(self.root, text="Nombre: No reconocido", font=("Arial", 16))
         self.name_label.pack(pady=10)
 
-        self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-
         self.last_recognition_time = 0
         self.last_recognized_name = None
 
@@ -49,16 +47,16 @@ class FaceRecognitionApp:
             return
 
         frame = cv2.flip(frame, 1)
-        small_frame = cv2.resize(frame, (320, 240))  # Reducción para acelerar detección
+        small_frame = cv2.resize(frame, (320, 240))  # Reducir para acelerar detección
         scale_factor = frame.shape[1] / 320
 
-        faces = detect_faces(small_frame, self.face_cascade)
+        faces = detect_faces(small_frame)  # Usamos RetinaFace aquí
 
         if faces is not None and len(faces) > 0:
-            # Escalado para coordenadas originales
+            # Escalamos la primera cara detectada (puedes hacer para varias si quieres)
             x, y, w, h = [int(coord * scale_factor) for coord in faces[0]]
 
-            # Padding para recorte cómodo (evita cortar partes)
+            # Padding para recorte cómodo
             padding = 10
             x = max(0, x - padding)
             y = max(0, y - padding)
@@ -68,14 +66,13 @@ class FaceRecognitionApp:
             face_img = frame[y:y+h, x:x+w]
 
             current_time = time.time()
-            # Reconocer cada 3 segundos para optimizar recursos
-            if current_time - self.last_recognition_time > 3:
+            if current_time - self.last_recognition_time > 3:  # cada 3 segundos
                 descriptor = get_face_descriptor(face_img)
                 descriptor = self.normalize(descriptor)
                 self.recognize_face(descriptor)
                 self.last_recognition_time = current_time
 
-            # Dibuja rectángulo
+            # Dibujar rectángulo
             cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
         else:
             self.name_label.config(text="Nombre: No reconocido")
@@ -88,7 +85,6 @@ class FaceRecognitionApp:
         self.canvas.imgtk = imgtk
         self.canvas.create_image(0, 0, anchor=tk.NW, image=imgtk)
 
-        # Loop cada 500ms
         self.root.after(500, self.update_frame)
 
     def recognize_face(self, descriptor):
@@ -102,7 +98,7 @@ class FaceRecognitionApp:
                 min_distance = distance
                 recognized_name = full_name
 
-        if recognized_name is not None and min_distance < 1.2 :  # Umbral de similitud
+        if recognized_name is not None and min_distance < 1.2:
             if recognized_name != self.last_recognized_name:
                 parts = recognized_name.strip().split()
                 first_name = parts[0] if len(parts) > 0 else ""
@@ -119,3 +115,10 @@ class FaceRecognitionApp:
             self.cap.release()
         self.conn.close()
         self.root.quit()
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = FaceRecognitionApp(root)
+    root.protocol("WM_DELETE_WINDOW", app.quit)
+    root.mainloop()
