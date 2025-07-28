@@ -4,31 +4,68 @@ import numpy as np
 from deepface import DeepFace
 from retinaface import RetinaFace
 import time
+import random
 
 print("[INFO] Cargando modelo ArcFace...")
 model = DeepFace.build_model("ArcFace")
 print("[INFO] Modelo cargado.")
 
-# Variables para cache de detecciones simples
-_last_detection = None
-_last_detection_time = 0
+class MixedFaceDetector:
+    def __init__(self):
+        self._last_detection = None
+        self._last_detection_time = 0
+        self.cache_time = 1.0  # segundos para cachear detecciones
+        self.frame_count = 0
 
-def preprocess_face(img, target_size=(112, 112)):
-    if img.ndim == 2:
-        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-    elif img.shape[2] == 4:
-        img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+        # Detector rápido Haar Cascade
+        self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        if self.face_cascade.empty():
+            raise IOError("No se pudo cargar haarcascade_frontalface_default.xml")
 
-    img = cv2.resize(img, target_size)
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img_rgb = img_rgb.astype('float32') / 255.0
-    img_rgb = np.expand_dims(img_rgb, axis=0)
-    return img_rgb
+    def detect_faces(self, frame):
+        current_time = time.time()
+        if self._last_detection is not None and (current_time - self._last_detection_time) < self.cache_time:
+            return self._last_detection
+
+        self.frame_count += 1
+        start = time.time()
+
+        # Ahora 75% rápido, 25% RetinaFace
+        if random.random() < 0.75:
+            # Detección rápida (Haar Cascade)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
+            boxes = [(x, y, w, h) for (x, y, w, h) in faces]
+            method = "Haar Cascade"
+        else:
+            # Detección más precisa (RetinaFace)
+            small_frame = cv2.resize(frame, (320, 240))
+            img_rgb = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+
+            faces = RetinaFace.detect_faces(img_rgb)
+            boxes = []
+            if isinstance(faces, dict):
+                for key, face in faces.items():
+                    x1, y1, x2, y2 = face['facial_area']
+                    scale_x = frame.shape[1] / 320
+                    scale_y = frame.shape[0] / 240
+                    x1 = int(x1 * scale_x)
+                    y1 = int(y1 * scale_y)
+                    x2 = int(x2 * scale_x)
+                    y2 = int(y2 * scale_y)
+                    boxes.append((x1, y1, x2 - x1, y2 - y1))
+            method = "RetinaFace"
+
+        elapsed = time.time() - start
+        print(f"[INFO] detect_faces ({method}): tiempo = {elapsed:.3f}s, faces detectadas: {len(boxes)}")
+
+        self._last_detection = boxes
+        self._last_detection_time = current_time
+        return boxes
 
 def get_face_descriptor(image):
     try:
         start = time.time()
-        # DeepFace.represent puede aceptar numpy array directamente
         result = DeepFace.represent(
             img_path=image,
             model_name="ArcFace",
@@ -45,37 +82,8 @@ def get_face_descriptor(image):
         print(f"[Error get_face_descriptor] {e}")
         return np.zeros(512)
 
-def detect_faces(frame, use_cache=True, cache_time=1.0):
-    global _last_detection, _last_detection_time
+# Instancia global
+_detector_instance = MixedFaceDetector()
 
-    current_time = time.time()
-    if use_cache and _last_detection is not None and (current_time - _last_detection_time) < cache_time:
-        # Retorna cache para evitar repetir detección si no pasó suficiente tiempo
-        return _last_detection
-
-    start = time.time()
-    # Reducir resolución para acelerar
-    small_frame = cv2.resize(frame, (160, 120))
-    img_rgb = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
-
-    faces = RetinaFace.detect_faces(img_rgb)
-
-    boxes = []
-    if isinstance(faces, dict):
-        for key, face in faces.items():
-            x1, y1, x2, y2 = face['facial_area']
-            # Ajustar coordenadas a tamaño original
-            scale_x = frame.shape[1] / 160
-            scale_y = frame.shape[0] / 120
-            x1 = int(x1 * scale_x)
-            y1 = int(y1 * scale_y)
-            x2 = int(x2 * scale_x)
-            y2 = int(y2 * scale_y)
-            boxes.append((x1, y1, x2 - x1, y2 - y1))
-
-    elapsed = time.time() - start
-    print(f"[INFO] detect_faces: tiempo de detección = {elapsed:.3f} segundos, Faces detectadas: {len(boxes)}")
-
-    _last_detection = boxes
-    _last_detection_time = current_time
-    return boxes
+def detect_faces(frame):
+    return _detector_instance.detect_faces(frame)

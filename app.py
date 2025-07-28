@@ -30,18 +30,13 @@ class FaceRecognitionApp:
         self.name_label = tk.Label(self.root, text="Nombre: No reconocido", font=("Arial", 16))
         self.name_label.pack(pady=10)
 
-        # Label para mostrar mensaje durante la detección
-        self.detecting_label = tk.Label(self.root, text="Detectando rostro, por favor no se mueva",
-                                       font=("Arial", 14), fg="red")
-        self.detecting_label.pack(pady=5)
-        self.detecting_label.place_forget()  # Lo ocultamos inicialmente
-
         # Variables compartidas
         self.lock = threading.Lock()
         self.frame = None
         self.processing_frame = None
         self.detected_face = None
         self.recognized_name = None
+        self.recognition_distance = None
 
         self.running = True
         self.last_recognition_time = 0
@@ -82,17 +77,17 @@ class FaceRecognitionApp:
 
                     current_time = time.time()
                     if current_time - self.last_recognition_time > 1.5:
-                        # Indicamos que está procesando la extracción y reconocimiento
                         self.processing_face = True
 
                         face_img = frame[y:y+h, x:x+w]
                         descriptor = get_face_descriptor(face_img)
                         descriptor = self.normalize(descriptor)
-                        recognized_name = self.recognize_face(descriptor)
+                        recognized_name, min_distance = self.recognize_face_with_distance(descriptor)
 
                         with self.lock:
                             self.detected_face = (x, y, w, h)
                             self.recognized_name = recognized_name
+                            self.recognition_distance = min_distance
 
                         self.last_recognition_time = current_time
                         self.processing_face = False
@@ -103,11 +98,12 @@ class FaceRecognitionApp:
                     with self.lock:
                         self.detected_face = None
                         self.recognized_name = None
+                        self.recognition_distance = None
                         self.processing_face = False
 
             time.sleep(0.01)
 
-    def recognize_face(self, descriptor):
+    def recognize_face_with_distance(self, descriptor):
         recognized_name = None
         min_distance = float('inf')
 
@@ -117,7 +113,10 @@ class FaceRecognitionApp:
                 min_distance = distance
                 recognized_name = full_name
 
-        return recognized_name if min_distance < 1.2 else None
+        if min_distance < 0.8:  # Umbral de reconocimiento
+            return recognized_name, min_distance
+        else:
+            return None, None
 
     def update_frame(self):
         ret, frame = self.cap.read()
@@ -132,11 +131,20 @@ class FaceRecognitionApp:
             self.processing_frame = frame.copy()
             detected_face = self.detected_face
             recognized_name = self.recognized_name
-            processing = self.processing_face
+            recognition_distance = self.recognition_distance
 
         if detected_face:
             x, y, w, h = detected_face
-            cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            if recognized_name and recognition_distance is not None:
+                parts = recognized_name.strip().split()
+                name = f"{parts[0]} {parts[1]}" if len(parts) > 1 else parts[0]
+                text = f"{name} ({recognition_distance:.2f})"
+                cv2.putText(frame, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7, (0, 255, 0), 2)
+            else:
+                cv2.putText(frame, "No reconocido", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7, (0, 0, 255), 2)
 
         if recognized_name:
             parts = recognized_name.strip().split()
@@ -144,12 +152,6 @@ class FaceRecognitionApp:
             self.name_label.config(text=f"Nombre: {name}")
         else:
             self.name_label.config(text="Nombre: No reconocido")
-
-        # Mostrar u ocultar mensaje según estado de procesamiento
-        if processing:
-            self.detecting_label.place(relx=0.5, rely=0.9, anchor=tk.CENTER)
-        else:
-            self.detecting_label.place_forget()
 
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(frame_rgb)

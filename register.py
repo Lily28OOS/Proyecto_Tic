@@ -56,6 +56,12 @@ class FaceRegister:
 
         self.root.after(15, self.update_frame)
 
+    def show_save_result(self, success, message):
+        if success:
+            messagebox.showinfo("Éxito", message)
+        else:
+            messagebox.showerror("Error", message)
+
     def capture_image(self):
         ret, frame = self.cap.read()
         if not ret:
@@ -81,7 +87,8 @@ class FaceRegister:
                 return
 
         self.cap.release()
-        show_registration_form(self.root, descriptor, face_img, self.face_db, self.c, self.conn)
+        # Pasar callback show_save_result para mostrar resultado después de guardar
+        show_registration_form(self.root, descriptor, face_img, self.face_db, self.c, self.conn, self.show_save_result)
 
     def cancel(self):
         self.cap.release()
