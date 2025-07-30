@@ -113,7 +113,7 @@ class FaceRecognitionApp:
                 min_distance = distance
                 recognized_name = full_name
 
-        if min_distance < 0.8:  # Umbral de reconocimiento
+        if min_distance < 0.75:  # Umbral de reconocimiento
             return recognized_name, min_distance
         else:
             return None, None
