@@ -69,7 +69,7 @@ class FaceRegister:
             return
 
         frame = cv2.flip(frame, 1)
-        faces = detect_faces(frame, self.face_cascade)
+        faces = detect_faces(frame)
 
         if len(faces) == 0:
             messagebox.showwarning("Advertencia", "No se detectó ningún rostro.")
@@ -88,7 +88,7 @@ class FaceRegister:
 
         self.cap.release()
         # Pasar callback show_save_result para mostrar resultado después de guardar
-        show_registration_form(self.root, descriptor, face_img, self.face_db, self.c, self.conn, self.show_save_result)
+        show_registration_form(self.root, descriptor, face_img, self.face_db, self.c, self.conn)
 
     def cancel(self):
         self.cap.release()
