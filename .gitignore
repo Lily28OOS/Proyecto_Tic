@@ -1,6 +1,9 @@
 # Ignorar la carpeta venv
-.venv/
+<<<<<<< HEAD
 venv/
+=======
+.venv/
+>>>>>>> d161071 (actualizacion de comandos hecho desde el departamento de tic de la utm)
 
 # Ignorar archivos grandes
 *.pyd
