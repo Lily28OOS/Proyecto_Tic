@@ -1,0 +1,13 @@
+opencv-python
+Pillow
+psycopg2
+numpy
+tf-keras
+deepface
+retina-face
+insightface
+pandas
+fastapi
+uvicorn
+multipart
+python-multipart

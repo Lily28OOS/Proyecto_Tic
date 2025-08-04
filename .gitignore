@@ -1,0 +1,9 @@
+# Ignorar la carpeta venv
+.venv/
+venv/
+
+# Ignorar archivos grandes
+*.pyd
+*.dll
+*.h5
+*.zip
