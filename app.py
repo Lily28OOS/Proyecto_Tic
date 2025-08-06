@@ -13,6 +13,14 @@ class FaceRecognizer:
         norm = np.linalg.norm(v)
         return v / norm if norm > 0 else v
 
+    def resize_image(self, image_bgr, max_width=800):
+        height, width = image_bgr.shape[:2]
+        if width > max_width:
+            scale = max_width / width
+            new_size = (int(width * scale), int(height * scale))
+            return cv2.resize(image_bgr, new_size, interpolation=cv2.INTER_AREA)
+        return image_bgr
+
     def recognize_face_with_distance(self, descriptor):
         recognized_name = None
         min_distance = float('inf')
@@ -28,12 +36,23 @@ class FaceRecognizer:
         return None, None
 
     def recognize_from_image(self, image_bgr):
+        # Redimensionar para evitar imágenes muy grandes
+        image_bgr = self.resize_image(image_bgr)
+
         faces = detect_faces(image_bgr)
         if not faces:
             return None, None
 
         x, y, w, h = faces[0]
-        padding = 10
+
+        # Validar tamaño mínimo del rostro
+        MIN_FACE_SIZE = 60
+        if w < MIN_FACE_SIZE or h < MIN_FACE_SIZE:
+            print("[WARNING] Rostro demasiado pequeño para reconocimiento.")
+            return None, None
+
+        # Padding dinámico 20% del tamaño del rostro
+        padding = int(0.2 * max(w, h))
         x = max(0, x - padding)
         y = max(0, y - padding)
         w = min(image_bgr.shape[1] - x, w + 2 * padding)
@@ -41,8 +60,11 @@ class FaceRecognizer:
 
         face_img = image_bgr[y:y+h, x:x+w]
         descriptor = get_face_descriptor(face_img)
-        descriptor = self.normalize(descriptor)
+        if descriptor is None or len(descriptor) == 0:
+            print("[ERROR] No se pudo obtener descriptor válido del rostro.")
+            return None, None
 
+        descriptor = self.normalize(descriptor)
         return self.recognize_face_with_distance(descriptor)
 
     def close(self):

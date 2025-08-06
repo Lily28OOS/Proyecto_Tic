@@ -138,11 +138,20 @@ async def recognize_face(file: UploadFile = File(...)):
     face_img = frame[y:y+h, x:x+w]
 
     descriptor = get_face_descriptor(face_img)
+    
+    if descriptor is None:
+        raise HTTPException(status_code=400, detail="No se pudo obtener el descriptor del rostro.")
+
+    print("[DEBUG] Descriptor generado:", descriptor[:5])  # Mostrar primeros valores
+
     name, distance = face_recognizer.recognize(descriptor)
+
+    print(f"[DEBUG] Resultado de reconocimiento: name={name}, distance={distance}")
 
     if name:
         return {"recognized": True, "name": name, "distance": distance}
-    return {"recognized": False, "message": "Rostro no reconocido."}
+    else:
+        return {"recognized": False, "message": "Rostro no reconocido."}
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
