@@ -103,5 +103,29 @@ AFTER INSERT ON personas
 FOR EACH ROW
 EXECUTE FUNCTION fn_personas_relacionar();
 
+SELECT fhv.* FROM esq_ficheros.fichero_hoja_vida AS fhv;
+
+CREATE SERVER servidor_ficheros
+FOREIGN DATA WRAPPER postgres_fdw
+OPTIONS (
+    host '192.168.2.95',
+    dbname 'db_sga_ficheros',
+    port '5432'
+);
+
+CREATE USER MAPPING FOR postgres
+SERVER servidor_ficheros
+OPTIONS (
+    user 'postgres',
+    password 'Desarrollo8ty7.'
+);
+
+IMPORT FOREIGN SCHEMA esq_ficheros
+LIMIT TO (fichero_hoja_vida)
+FROM SERVER servidor_ficheros
+INTO public;
+
+SELECT * FROM public.fichero_hoja_vida;
+
 
 SELECT * from personas, codificaciones_faciales;

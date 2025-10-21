@@ -1,3 +1,7 @@
+# Antes de ejecutar el test, asegúrate de que el servidor FastAPI esté corriendo.
+# debes ejecutar primero: python main.py
+# Luego, en otra terminal, ejecuta este script de prueba.
+
 import cv2
 import requests
 

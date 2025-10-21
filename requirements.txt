@@ -1,3 +1,16 @@
+# Antes de instalar, asegúrate de tener cmake instalado, desde la página oficial:
+# https://cmake.org/download/
+# O si usas Ubuntu/Debian:
+# sudo apt-get install cmake
+# O si usas macOS con Homebrew:
+# brew install cmake 
+# luego verifica si pip esta actualizado:
+# pip install --upgrade pip
+# Luego instala las dependencias con:
+# pip install -r requirements.txt
+# Dependencias necesarias para el proyecto de reconocimiento facial (FastAPI, face_recognition, PostgreSQL)
+
+
 opencv-python
 Pillow
 psycopg2
