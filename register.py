@@ -45,7 +45,7 @@ class FaceRegister:
             'face_image': face_img
         }
 
-    def register_person(self, cedula, nombre1, nombre2, apellido1, apellido2, correo_completo, descriptor):
+    def register_person(self, cedula, nombre1, nombre2, apellido1, apellido2, descriptor):
         """
         Guarda los datos personales y el descriptor facial en la base de datos.
         descriptor debe ser un numpy array.
@@ -54,12 +54,14 @@ class FaceRegister:
         try:
             descriptor_list = descriptor.tolist()
 
+            # Insertar persona sin correo electrónico
             self.c.execute("""
-                INSERT INTO personas (cedula, nombre, nombre2, apellido1, apellido2, correo_electronico)
-                VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
-            """, (cedula, nombre1, nombre2, apellido1, apellido2, correo_completo))
+                INSERT INTO personas (cedula, nombre, nombre2, apellido1, apellido2, estado)
+                VALUES (%s, %s, %s, %s, %s, 'activo') RETURNING id
+            """, (cedula, nombre1, nombre2, apellido1, apellido2))
             persona_id = self.c.fetchone()[0]
 
+            # Insertar codificación facial
             self.c.execute("""
                 INSERT INTO codificaciones_faciales (persona_id, codificacion)
                 VALUES (%s, %s)

@@ -3,6 +3,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 import cv2
+import requests
 from io import BytesIO
 from PIL import Image
 from face_recognition import detect_faces, get_face_descriptor
@@ -138,20 +139,135 @@ async def recognize_face(file: UploadFile = File(...)):
     face_img = frame[y:y+h, x:x+w]
 
     descriptor = get_face_descriptor(face_img)
-    
     if descriptor is None:
         raise HTTPException(status_code=400, detail="No se pudo obtener el descriptor del rostro.")
 
-    print("[DEBUG] Descriptor generado:", descriptor[:5])  # Mostrar primeros valores
+    print("[DEBUG] Descriptor generado:", descriptor[:5])
 
     name, distance = face_recognizer.recognize(descriptor)
-
     print(f"[DEBUG] Resultado de reconocimiento: name={name}, distance={distance}")
 
-    if name:
-        return {"recognized": True, "name": name, "distance": distance}
-    else:
+    if not name:
         return {"recognized": False, "message": "Rostro no reconocido."}
+
+    # Extraer la cédula del nombre reconocido (formato: "Nombre (CEDULA)")
+    import re
+    match = re.search(r'\((\d+)\)', name)
+    cedula_recognized = match.group(1) if match else None
+
+    # Obtener datos completos de la persona desde la DB
+    c.execute("""
+        SELECT nombre, nombre2, apellido1, apellido2, cedula
+        FROM personas
+        WHERE cedula = %s AND estado='activo'
+    """, (cedula_recognized,))
+    row = c.fetchone()
+
+    if not row:
+        return {
+            "recognized": True,
+            "name": name,
+            "cedula": cedula_recognized,
+            "distance": float(distance),
+            "message": "Rostro reconocido pero no hay datos completos en DB"
+        }
+
+    nombre1, nombre2, apellido1, apellido2, cedula_db = row
+
+    return {
+        "recognized": True,
+        "cedula": cedula_db,
+        "nombre1": nombre1,
+        "nombre2": nombre2,
+        "apellido1": apellido1,
+        "apellido2": apellido2,
+        "distance": float(distance)
+    }
+
+@app.post("/verify_access/")
+async def verify_access(cedula: str = Form(...), file: UploadFile = File(...)):
+    contents = await file.read()
+    image = Image.open(BytesIO(contents)).convert("RGB")
+    frame = np.array(image)
+    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+    faces = detect_faces(frame)
+    if not faces:
+        raise HTTPException(status_code=400, detail="No se detectó ningún rostro en la imagen.")
+
+    x, y, w, h = faces[0]
+    face_img = frame[y:y+h, x:x+w]
+
+    descriptor = get_face_descriptor(face_img)
+    if descriptor is None:
+        raise HTTPException(status_code=400, detail="No se pudo obtener el descriptor del rostro.")
+
+    name, distance = face_recognizer.recognize(descriptor)
+    if not name:
+        return {"access_granted": False, "message": "Rostro no reconocido."}
+
+    # Buscar la cédula asociada al nombre reconocido
+    c.execute("SELECT cedula FROM personas WHERE nombre = %s", (name,))
+    row = c.fetchone()
+    if row and row[0] == cedula:
+        return {"access_granted": True, "name": name, "distance": distance}
+    else:
+        return {"access_granted": False, "message": "Cédula no coincide con el rostro detectado."}
+
+@app.post("/sync_user/")
+async def sync_user(cedula: str = Form(...)):
+    """
+    Busca un usuario por cédula en la API externa y lo guarda en la DB local.
+    """
+    api_url = "http://172.16.226.42:3000/administracion/usuario/v1/buscar_por_cedula"
+    payload = {"cedula": cedula}
+
+    try:
+        response = requests.post(api_url, json=payload)
+        response.raise_for_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con API externa: {e}")
+
+    data = response.json()
+    if not data.get("p_status") or not data.get("p_data", {}).get("p_usuarios"):
+        raise HTTPException(status_code=404, detail="Usuario no encontrado en API externa")
+
+    usuario = data["p_data"]["p_usuarios"][0]
+
+    # Separar nombre y apellidos correctamente (apellido1 apellido2 nombre1 nombre2)
+    partes = usuario["persona"].split()
+    apellido1 = partes[0] if len(partes) > 0 else ""
+    apellido2 = partes[1] if len(partes) > 1 else ""
+    nombre1 = partes[2] if len(partes) > 2 else ""
+    nombre2 = " ".join(partes[3:]) if len(partes) > 3 else ""
+
+    # Verificar si ya existe en la DB
+    c.execute("SELECT id FROM personas WHERE cedula = %s", (usuario["cedula"],))
+    row = c.fetchone()
+    if row:
+        return {"message": "Usuario ya existe en la base de datos", "id": row[0]}
+
+    # Insertar en la DB local
+    try:
+        c.execute("""
+            INSERT INTO personas (cedula, nombre, nombre2, apellido1, apellido2, estado)
+            VALUES (%s, %s, %s, %s, %s, 'activo') RETURNING id
+        """, (usuario["cedula"], nombre1, nombre2, apellido1, apellido2))
+        persona_id = c.fetchone()[0]
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al guardar usuario en DB: {e}")
+
+    return {
+        "message": "Usuario sincronizado correctamente",
+        "persona_id": persona_id,
+        "cedula": usuario["cedula"],
+        "nombre1": nombre1,
+        "nombre2": nombre2,
+        "apellido1": apellido1,
+        "apellido2": apellido2
+    }
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
