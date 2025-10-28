@@ -125,7 +125,50 @@ LIMIT TO (fichero_hoja_vida)
 FROM SERVER servidor_ficheros
 INTO public;
 
+ALTER TABLE personas
+DROP COLUMN IF EXISTS correo_electronico;
+
+ALTER TABLE personas
+DROP CONSTRAINT IF EXISTS personas_cedula_check;
+
+ALTER TABLE personas
+ADD CONSTRAINT personas_cedula_unique UNIQUE (cedula);
+
+ALTER TABLE personas
+ADD CONSTRAINT personas_cedula_check
+CHECK (cedula ~ '^[0-9]{10}$');
+
+SELECT conname, pg_get_constraintdef(c.oid)
+FROM pg_constraint c
+JOIN pg_class t ON c.conrelid = t.oid
+WHERE t.relname = 'personas';
+
 SELECT * FROM public.fichero_hoja_vida;
 
-
 SELECT * from personas, codificaciones_faciales;
+
+ALTER TABLE personas
+ADD COLUMN IF NOT EXISTS estado VARCHAR(20)
+DEFAULT 'pendiente_rostro'
+CHECK (estado IN ('pendiente_rostro', 'activo', 'inactivo'));
+
+CREATE OR REPLACE FUNCTION fn_activar_persona_al_registrar_rostro()
+RETURNS TRIGGER AS
+$$
+BEGIN
+    UPDATE personas
+    SET estado = 'activo'
+    WHERE id = NEW.persona_id;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_activar_persona_al_registrar_rostro
+AFTER INSERT ON codificaciones_faciales
+FOR EACH ROW
+EXECUTE FUNCTION fn_activar_persona_al_registrar_rostro();
+
+UPDATE personas
+SET estado = 'activo'
+WHERE id IN (SELECT persona_id FROM codificaciones_faciales);
+
