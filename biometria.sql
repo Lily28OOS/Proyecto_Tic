@@ -172,3 +172,51 @@ UPDATE personas
 SET estado = 'activo'
 WHERE id IN (SELECT persona_id FROM codificaciones_faciales);
 
+-- Agregar la nueva columna 'activo' sin eliminar todavía 'estado'
+ALTER TABLE personas
+ADD COLUMN IF NOT EXISTS activo BOOLEAN;
+
+-- Migrar los valores del campo 'estado' al booleano 'activo'
+UPDATE personas
+SET activo = CASE
+    WHEN estado = 'activo' THEN TRUE
+    ELSE FALSE
+END;
+
+SELECT estado, activo, COUNT(*)
+FROM personas
+GROUP BY estado, activo
+ORDER BY estado;
+
+-- Eliminar columna antigua 'estado'
+ALTER TABLE personas
+DROP COLUMN estado;
+
+-- Definir valor por defecto y no nulo
+ALTER TABLE personas
+ALTER COLUMN activo SET DEFAULT FALSE,
+ALTER COLUMN activo SET NOT NULL;
+
+-- Función para activar persona al registrar rostro
+CREATE OR REPLACE FUNCTION fn_activar_persona_al_registrar_rostro()
+RETURNS TRIGGER AS
+$$
+BEGIN
+    UPDATE personas
+    SET activo = TRUE
+    WHERE id = NEW.persona_id;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger
+DROP TRIGGER IF EXISTS trg_activar_persona_al_registrar_rostro ON codificaciones_faciales;
+
+CREATE TRIGGER trg_activar_persona_al_registrar_rostro
+AFTER INSERT ON codificaciones_faciales
+FOR EACH ROW
+EXECUTE FUNCTION fn_activar_persona_al_registrar_rostro();
+
+UPDATE personas
+SET activo = TRUE
+WHERE id IN (SELECT persona_id FROM codificaciones_faciales);
