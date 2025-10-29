@@ -9,6 +9,7 @@ from PIL import Image
 from face_recognition import detect_faces, get_face_descriptor
 from database import connect_db, load_faces_from_db
 import uvicorn
+import re
 
 # --- Lógica de Registro --- #
 class FaceRegistrar:
@@ -17,20 +18,22 @@ class FaceRegistrar:
         self.conn = conn
         self.face_db = face_db
 
-    def register(self, cedula, nombre1, nombre2, apellido1, apellido2, correo_prefijo, correo_sufijo, descriptor):
-        correo = correo_prefijo + correo_sufijo
+    def register(self, cedula, nombre1, nombre2, apellido1, apellido2, descriptor):
+        # Verificar si el rostro ya está registrado
         for _, existing_descriptor in self.face_db:
             distance = np.linalg.norm(existing_descriptor - descriptor)
             if distance < 0.9:
                 return False, "Este rostro ya está registrado."
 
         try:
+            # Insertar persona en la base de datos
             self.c.execute("""
-                INSERT INTO personas (cedula, nombre, nombre2, apellido1, apellido2, correo_electronico)
-                VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
-            """, (cedula, nombre1, nombre2, apellido1, apellido2, correo))
+                INSERT INTO personas (cedula, nombre, nombre2, apellido1, apellido2)
+                VALUES (%s, %s, %s, %s, %s) RETURNING id
+            """, (cedula, nombre1, nombre2, apellido1, apellido2))
             persona_id = self.c.fetchone()[0]
 
+            # Insertar codificación facial
             descriptor_list = descriptor.tolist()
             self.c.execute("""
                 INSERT INTO codificaciones_faciales (persona_id, codificacion)
@@ -38,10 +41,13 @@ class FaceRegistrar:
             """, (persona_id, descriptor_list))
             self.conn.commit()
 
-            full_name = f"{nombre1} {apellido1}"
+            # Agregar a la base de datos en memoria
+            full_name = f"{nombre1} {apellido1} ({cedula})"
             self.face_db.append((full_name, self.normalize(descriptor)))
+
             return True, "Rostro registrado exitosamente."
         except Exception as e:
+            self.conn.rollback()
             return False, f"Error al registrar: {e}"
 
     def normalize(self, v):
@@ -90,6 +96,8 @@ face_db = load_faces_from_db(c)
 face_registrar = FaceRegistrar(c, conn, face_db)
 face_recognizer = FaceRecognizer(face_db)
 
+# --- Endpoints --- #
+
 @app.post("/register/")
 async def register_face(
     cedula: str = Form(...),
@@ -97,8 +105,6 @@ async def register_face(
     nombre2: str = Form(""),
     apellido1: str = Form(...),
     apellido2: str = Form(""),
-    correo_prefijo: str = Form(...),
-    correo_sufijo: str = Form(...),
     file: UploadFile = File(...)
 ):
     contents = await file.read()
@@ -112,17 +118,16 @@ async def register_face(
 
     x, y, w, h = faces[0]
     face_img = frame[y:y+h, x:x+w]
-
     descriptor = get_face_descriptor(face_img)
 
     success, message = face_registrar.register(
-        cedula, nombre1, nombre2, apellido1, apellido2,
-        correo_prefijo, correo_sufijo, descriptor
+        cedula, nombre1, nombre2, apellido1, apellido2, descriptor
     )
     if not success:
         raise HTTPException(status_code=400, detail=message)
 
     return {"message": message}
+
 
 @app.post("/recognize/")
 async def recognize_face(file: UploadFile = File(...)):
@@ -137,29 +142,23 @@ async def recognize_face(file: UploadFile = File(...)):
 
     x, y, w, h = faces[0]
     face_img = frame[y:y+h, x:x+w]
-
     descriptor = get_face_descriptor(face_img)
+
     if descriptor is None:
         raise HTTPException(status_code=400, detail="No se pudo obtener el descriptor del rostro.")
 
-    print("[DEBUG] Descriptor generado:", descriptor[:5])
-
     name, distance = face_recognizer.recognize(descriptor)
-    print(f"[DEBUG] Resultado de reconocimiento: name={name}, distance={distance}")
 
     if not name:
         return {"recognized": False, "message": "Rostro no reconocido."}
 
-    # Extraer la cédula del nombre reconocido (formato: "Nombre (CEDULA)")
-    import re
     match = re.search(r'\((\d+)\)', name)
     cedula_recognized = match.group(1) if match else None
 
-    # Obtener datos completos de la persona desde la DB
     c.execute("""
         SELECT nombre, nombre2, apellido1, apellido2, cedula
         FROM personas
-        WHERE cedula = %s AND estado='activo'
+        WHERE cedula = %s AND activo = TRUE
     """, (cedula_recognized,))
     row = c.fetchone()
 
@@ -184,6 +183,7 @@ async def recognize_face(file: UploadFile = File(...)):
         "distance": float(distance)
     }
 
+
 @app.post("/verify_access/")
 async def verify_access(cedula: str = Form(...), file: UploadFile = File(...)):
     contents = await file.read()
@@ -197,8 +197,8 @@ async def verify_access(cedula: str = Form(...), file: UploadFile = File(...)):
 
     x, y, w, h = faces[0]
     face_img = frame[y:y+h, x:x+w]
-
     descriptor = get_face_descriptor(face_img)
+
     if descriptor is None:
         raise HTTPException(status_code=400, detail="No se pudo obtener el descriptor del rostro.")
 
@@ -213,6 +213,7 @@ async def verify_access(cedula: str = Form(...), file: UploadFile = File(...)):
         return {"access_granted": True, "name": name, "distance": distance}
     else:
         return {"access_granted": False, "message": "Cédula no coincide con el rostro detectado."}
+
 
 @app.post("/sync_user/")
 async def sync_user(cedula: str = Form(...)):
@@ -234,14 +235,14 @@ async def sync_user(cedula: str = Form(...)):
 
     usuario = data["p_data"]["p_usuarios"][0]
 
-    # Separar nombre y apellidos correctamente (apellido1 apellido2 nombre1 nombre2)
+    # Separar nombre y apellidos correctamente
     partes = usuario["persona"].split()
     apellido1 = partes[0] if len(partes) > 0 else ""
     apellido2 = partes[1] if len(partes) > 1 else ""
     nombre1 = partes[2] if len(partes) > 2 else ""
     nombre2 = " ".join(partes[3:]) if len(partes) > 3 else ""
 
-    # Verificar si ya existe en la DB
+    # Verificar si ya existe
     c.execute("SELECT id FROM personas WHERE cedula = %s", (usuario["cedula"],))
     row = c.fetchone()
     if row:
@@ -250,8 +251,8 @@ async def sync_user(cedula: str = Form(...)):
     # Insertar en la DB local
     try:
         c.execute("""
-            INSERT INTO personas (cedula, nombre, nombre2, apellido1, apellido2, estado)
-            VALUES (%s, %s, %s, %s, %s, 'activo') RETURNING id
+            INSERT INTO personas (cedula, nombre, nombre2, apellido1, apellido2, activo)
+            VALUES (%s, %s, %s, %s, %s, TRUE) RETURNING id
         """, (usuario["cedula"], nombre1, nombre2, apellido1, apellido2))
         persona_id = c.fetchone()[0]
         conn.commit()
@@ -269,6 +270,6 @@ async def sync_user(cedula: str = Form(...)):
         "apellido2": apellido2
     }
 
+
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
-
