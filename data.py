@@ -22,7 +22,7 @@ def buscar_por_cedula(cedula: str, url: str = DEFAULT_URL, timeout: int = 10) ->
 
 if __name__ == "__main__":
     # Ejemplo de uso
-    cedula_ej = "1314314244"
+    cedula_ej = "1314695154"
     status, data = buscar_por_cedula(cedula_ej)
     print("status:", status)
     print("data:", data)

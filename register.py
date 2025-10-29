@@ -2,6 +2,7 @@
 import cv2
 import numpy as np
 from face_recognition import detect_faces, get_face_descriptor
+from psycopg2.extras import Json
 
 class FaceRegister:
     def __init__(self, c, conn, face_db):
@@ -52,9 +53,10 @@ class FaceRegister:
         Retorna diccionario con éxito o error.
         """
         try:
-            descriptor_list = descriptor.tolist()
+            # Convertir descriptor a JSON para PostgreSQL
+            descriptor_json = Json(descriptor.tolist())
 
-            # Insertar persona sin correo electrónico
+            # Insertar persona
             self.c.execute("""
                 INSERT INTO personas (cedula, nombre, nombre2, apellido1, apellido2, estado)
                 VALUES (%s, %s, %s, %s, %s, 'activo') RETURNING id
@@ -65,8 +67,9 @@ class FaceRegister:
             self.c.execute("""
                 INSERT INTO codificaciones_faciales (persona_id, codificacion)
                 VALUES (%s, %s)
-            """, (persona_id, descriptor_list))
+            """, (persona_id, descriptor_json))
 
+            # Confirmar cambios
             self.conn.commit()
 
             # Actualizar la base de datos en memoria

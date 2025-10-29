@@ -54,11 +54,15 @@ HTML_PAGE = """<!DOCTYPE html>
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       return new Promise(resolve => {
-        canvas.toBlob(blob => resolve(blob), 'image/jpeg');
+        canvas.toBlob(blob => resolve(blob || null), 'image/jpeg');
       });
     }
 
     async function postImage(url, blob, extraData={}) {
+      if (!blob) {
+        responseBox.textContent = 'Error: no se pudo capturar la imagen';
+        return;
+      }
       const formData = new FormData();
       formData.append('file', blob, 'frame.jpg');
       for (const key in extraData) formData.append(key, extraData[key]);
@@ -74,15 +78,12 @@ HTML_PAGE = """<!DOCTYPE html>
     registerBtn.onclick = async () => {
       await startCamera();
       const blob = await captureImage();
-      // Datos de prueba para registro
       await postImage('http://localhost:8000/register/', blob, {
-        cedula: '123456',
+        cedula: '1234567890',
         nombre1: 'Prueba',
         nombre2: '',
         apellido1: 'Usuario',
-        apellido2: '',
-        correo_prefijo: 'test',
-        correo_sufijo: '@mail.com'
+        apellido2: ''
       });
     };
 
@@ -101,6 +102,11 @@ HTML_PAGE = """<!DOCTYPE html>
 
       await startCamera();
       const blob = await captureImage();
+      if (!blob) {
+        responseBox.textContent = 'No se pudo capturar la imagen';
+        return;
+      }
+
       const formData = new FormData();
       formData.append('file', blob);
 
