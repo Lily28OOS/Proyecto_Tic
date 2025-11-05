@@ -9,96 +9,109 @@ from PIL import Image
 from face_recognition import detect_faces, get_face_descriptor
 from database import connect_db, load_faces_from_db
 import uvicorn
+import json
 import re
 
-# --- Lógica de Registro --- #
+# --- Helpers mínimos (español) --- #
+def _get_id_from_row(row):
+    if not row:
+        return None
+    if isinstance(row, dict):
+        return row.get("id")
+    try:
+        return row[0]
+    except Exception:
+        return None
+
+def _person_fields_from_row(row):
+    if not row:
+        return (None, None, None, None, None)
+    if isinstance(row, dict):
+        return (row.get("nombre"), row.get("nombre2"), row.get("apellido1"), row.get("apellido2"), row.get("cedula"))
+    vals = list(row)
+    vals += [None] * (5 - len(vals))
+    return tuple(vals[:5])
+
+# --- Registro y reconocimiento mínimos --- #
+THRESHOLD = 0.75
+
 class FaceRegistrar:
     def __init__(self, cursor, conn, face_db):
         self.c = cursor
         self.conn = conn
         self.face_db = face_db
 
+    def _normalize(self, v):
+        a = np.array(v, dtype=float)
+        n = np.linalg.norm(a)
+        return a / n if n > 0 else a
+
     def register(self, cedula, descriptor):
-        # Buscar usuario existente
         self.c.execute("SELECT id FROM personas WHERE cedula = %s", (cedula,))
-        row = self.c.fetchone()
-        if not row:
-            return False, "Usuario no encontrado. Primero sincronice con la API externa."
+        persona_id = _get_id_from_row(self.c.fetchone())
+        if not persona_id:
+            return False, "Usuario no encontrado (sincronice primero)."
 
-        persona_id = row[0]
-
-        # Verificar si el rostro ya está registrado
-        for _, existing_descriptor in self.face_db:
-            distance = np.linalg.norm(existing_descriptor - descriptor)
-            if distance < 0.9:
-                return False, "Este rostro ya está registrado."
+        desc = self._normalize(descriptor)
+        for _, existing in self.face_db:
+            try:
+                if np.linalg.norm(existing - desc) < THRESHOLD:
+                    return False, "Rostro ya registrado."
+            except Exception:
+                continue
 
         try:
-            # Insertar codificación facial
-            descriptor_list = descriptor.tolist()
-            self.c.execute("""
-                INSERT INTO codificaciones_faciales (persona_id, codificacion)
-                VALUES (%s, %s)
-            """, (persona_id, descriptor_list))
-
-            # Actualizar activo = TRUE al vincular rostro
+            self.c.execute(
+                "INSERT INTO codificaciones_faciales (persona_id, codificacion) VALUES (%s, %s)",
+                (persona_id, desc.tolist()),
+            )
             self.c.execute("UPDATE personas SET activo = TRUE WHERE id = %s", (persona_id,))
             self.conn.commit()
-
-            # Agregar a la base de datos en memoria
+            # actualizar memoria
             self.c.execute("SELECT nombre, nombre2, apellido1, apellido2, cedula FROM personas WHERE id = %s", (persona_id,))
-            nombre1, nombre2, apellido1, apellido2, cedula_db = self.c.fetchone()
-            full_name = f"{nombre1} {apellido1} ({cedula_db})"
-            self.face_db.append((full_name, self.normalize(descriptor)))
-
-            return True, "Rostro registrado y usuario activado correctamente."
+            info = self.c.fetchone()
+            nombre1, _, apellido1, _, cedula_db = _person_fields_from_row(info)
+            display = f"{nombre1 or ''} {apellido1 or ''} ({cedula_db or ''})".strip()
+            self.face_db.append((display, desc))
+            return True, {"persona_id": persona_id}
         except Exception as e:
             self.conn.rollback()
-            return False, f"Error al registrar rostro: {e}"
+            return False, f"Error al guardar descriptor: {e}"
 
-    def normalize(self, v):
-        norm = np.linalg.norm(v)
-        return v / norm if norm > 0 else v
-
-# --- Lógica de Reconocimiento --- #
 class FaceRecognizer:
     def __init__(self, face_db):
-        self.face_db = [(name, self.normalize(desc)) for name, desc in face_db]
-
-    def normalize(self, v):
-        norm = np.linalg.norm(v)
-        return v / norm if norm > 0 else v
+        normalized = []
+        for name, desc in face_db:
+            a = np.array(desc, dtype=float)
+            n = np.linalg.norm(a)
+            if n > 0:
+                a = a / n
+            normalized.append((name, a))
+        self.face_db = normalized
 
     def recognize(self, descriptor):
-        descriptor = self.normalize(descriptor)
-        recognized_name = None
-        min_distance = float("inf")
-
-        for full_name, saved_descriptor in self.face_db:
-            distance = np.linalg.norm(saved_descriptor - descriptor)
-            if distance < min_distance:
-                min_distance = distance
-                recognized_name = full_name
-
-        if min_distance < 0.75:
-            return recognized_name, min_distance
+        d = np.array(descriptor, dtype=float)
+        n = np.linalg.norm(d)
+        if n > 0:
+            d = d / n
+        best, best_dist = None, float("inf")
+        for name, existing in self.face_db:
+            try:
+                dist = np.linalg.norm(existing - d)
+            except Exception:
+                continue
+            if dist < best_dist:
+                best, best_dist = name, dist
+        if best is not None and best_dist < THRESHOLD:
+            return best, float(best_dist)
         return None, None
 
-# --- FastAPI App --- #
+# --- App --- #
 app = FastAPI(title="Face Recognition API")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Conexión y carga inicial
 conn, c = None, None
 face_db = []
-
 face_registrar = None
 face_recognizer = None
 
@@ -106,176 +119,138 @@ face_recognizer = None
 async def startup():
     global conn, c, face_db, face_registrar, face_recognizer
     conn, c = connect_db()
-    raw_faces = load_faces_from_db(c)  # espera lista [(name, descriptor_list), ...]
-    # convertir a numpy arrays y normalizar
-    face_db = []
-    for name, desc in raw_faces:
-        arr = np.array(desc, dtype=float)
-        norm = np.linalg.norm(arr)
-        face_db.append((name, arr / norm if norm > 0 else arr))
+    raw = load_faces_from_db(c)  # [(name, descriptor), ...]
+    cleaned = []
+    for name, desc in raw:
+        try:
+            a = np.array(desc, dtype=float)
+            n = np.linalg.norm(a)
+            if n > 0:
+                a = a / n
+            cleaned.append((name, a))
+        except Exception:
+            continue
+    face_db = cleaned
     face_registrar = FaceRegistrar(c, conn, face_db)
     face_recognizer = FaceRecognizer(face_db)
 
 @app.on_event("shutdown")
 async def shutdown():
+    global conn, c
     try:
-        if c:
-            c.close()
+        if c: c.close()
     except Exception:
         pass
     try:
-        if conn:
-            conn.close()
+        if conn: conn.close()
     except Exception:
         pass
-
-# --- Endpoints --- #
 
 @app.post("/sync_user/")
-async def sync_user(cedula: str = Form(...)):
+async def sync_user(idpersonal: str = Form(...)):
     api_url = "http://localhost:3000/administracion/usuario/v1/buscar_por_idpersonal"
-    # la API espera idPersonal en el payload
-    payload = {"idPersonal": cedula}
-
     try:
-        response = requests.post(api_url, json=payload, timeout=10)
-        response.raise_for_status()
+        r = requests.post(api_url, json={"idPersonal": idpersonal}, timeout=10)
+        r.raise_for_status()
+        data = r.json()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con API externa: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al llamar API externa: {e}")
 
-    data = response.json()
-    # respuesta esperada: p_status y p_data.p_usuarios
-    if not data.get("p_status") or not data.get("p_data", {}).get("p_usuarios"):
+    usuarios = data.get("p_data", {}).get("p_usuarios") or []
+    if not usuarios:
         raise HTTPException(status_code=404, detail="Usuario no encontrado en API externa")
+    usuario = usuarios[0]
+    cedula = usuario.get("cedula")
+    if not cedula:
+        raise HTTPException(status_code=400, detail="La respuesta no contiene 'cedula'")
 
-    usuario = data["p_data"]["p_usuarios"][0]
+    # extraer nombres simples
+    nombres = usuario.get("nombres") or ""
+    apellidos = usuario.get("apellidos") or ""
+    n1 = nombres.split()[0] if nombres else ""
+    n2 = " ".join(nombres.split()[1:]) if len(nombres.split()) > 1 else ""
+    a1 = apellidos.split()[0] if apellidos else ""
+    a2 = " ".join(apellidos.split()[1:]) if len(apellidos.split()) > 1 else ""
 
-    # Preferir campos explícitos si existen, fallback a cadena completa
-    persona_str = usuario.get("persona") or usuario.get("nombre_completo") or ""
-    nombres = usuario.get("nombres") or usuario.get("nombres_persona")
-    apellidos = usuario.get("apellidos") or usuario.get("apellidos_persona")
+    c.execute("SELECT id FROM personas WHERE cedula = %s", (cedula,))
+    if _get_id_from_row(c.fetchone()):
+        # actualizar metadata si existe
+        try:
+            c.execute("INSERT INTO persona_metadata (persona_id, metadata) VALUES (%s, %s) ON CONFLICT (persona_id) DO UPDATE SET metadata = EXCLUDED.metadata", (_get_id_from_row(c.fetchone()), json.dumps(usuario, ensure_ascii=False)))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        return {"message": "Usuario ya existe"}
 
-    if nombres and apellidos:
-        nombre_parts = nombres.split()
-        apellido_parts = apellidos.split()
-        nombre1 = nombre_parts[0] if nombre_parts else ""
-        nombre2 = " ".join(nombre_parts[1:]) if len(nombre_parts) > 1 else ""
-        apellido1 = apellido_parts[0] if apellido_parts else ""
-        apellido2 = " ".join(apellido_parts[1:]) if len(apellido_parts) > 1 else ""
-    else:
-        partes = persona_str.split()
-        apellido1 = partes[0] if len(partes) > 0 else ""
-        apellido2 = partes[1] if len(partes) > 1 else ""
-        nombre1 = partes[2] if len(partes) > 2 else ""
-        nombre2 = " ".join(partes[3:]) if len(partes) > 3 else ""
-
-    # Verificar si ya existe
-    c.execute("SELECT id FROM personas WHERE cedula = %s", (usuario.get("cedula") or cedula,))
-    row = c.fetchone()
-    if row:
-        return {"message": "Usuario ya existe en la base de datos", "id": row[0]}
-
-    # Insertar en la DB local con activo = FALSE
     try:
-        c.execute("""
-            INSERT INTO personas (cedula, nombre, nombre2, apellido1, apellido2, activo)
-            VALUES (%s, %s, %s, %s, %s, FALSE) RETURNING id
-        """, (
-            usuario.get("cedula") or cedula, nombre1, nombre2, apellido1, apellido2
-        ))
-        persona_id = c.fetchone()[0]
+        c.execute("INSERT INTO personas (cedula, nombre, nombre2, apellido1, apellido2, activo) VALUES (%s,%s,%s,%s,%s,FALSE) RETURNING id", (cedula, n1, n2, a1, a2))
+        new_id = _get_id_from_row(c.fetchone())
+        if not new_id:
+            c.execute("SELECT id FROM personas WHERE cedula = %s", (cedula,))
+            new_id = _get_id_from_row(c.fetchone())
+        try:
+            c.execute("INSERT INTO persona_metadata (persona_id, metadata) VALUES (%s, %s) ON CONFLICT (persona_id) DO UPDATE SET metadata = EXCLUDED.metadata", (new_id, json.dumps(usuario, ensure_ascii=False)))
+        except Exception:
+            conn.rollback()
         conn.commit()
     except Exception as e:
         conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Error al guardar usuario en DB: {e}")
+        raise HTTPException(status_code=500, detail=f"Error guardando en DB: {e}")
 
-    return {
-        "message": "Usuario sincronizado correctamente",
-        "persona_id": persona_id,
-        "cedula": usuario.get("cedula") or cedula,
-        "nombre1": nombre1,
-        "nombre2": nombre2,
-        "apellido1": apellido1,
-        "apellido2": apellido2,
-        "activo": False
-    }
+    return {"message": "Sincronizado", "persona_id": new_id, "cedula": cedula}
 
 @app.post("/register/")
 async def register_face(cedula: str = Form(...), file: UploadFile = File(...)):
-    contents = await file.read()
-    image = Image.open(BytesIO(contents)).convert("RGB")
-    frame = np.array(image)
-    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-
-    faces = detect_faces(frame)
+    if not face_registrar:
+        raise HTTPException(status_code=500, detail="Servicio no inicializado")
+    content = await file.read()
+    try:
+        img = Image.open(BytesIO(content)).convert("RGB")
+        img_np = np.array(img)[:, :, ::-1]  # RGB -> BGR
+    except Exception:
+        raise HTTPException(status_code=400, detail="Imagen inválida")
+    faces = detect_faces(img_np)
     if not faces:
-        raise HTTPException(status_code=400, detail="No se detectó ningún rostro en la imagen.")
-
+        raise HTTPException(status_code=400, detail="No se detectó rostro")
     x, y, w, h = faces[0]
-    face_img = frame[y:y+h, x:x+w]
-    descriptor = get_face_descriptor(face_img)
-
-    if descriptor is None:
-        raise HTTPException(status_code=400, detail="No se pudo obtener el descriptor del rostro.")
-
-    success, message = face_registrar.register(cedula, descriptor)
+    face_img = img_np[y:y+h, x:x+w]
+    desc = get_face_descriptor(face_img)
+    if desc is None:
+        raise HTTPException(status_code=500, detail="No se pudo calcular descriptor")
+    success, payload = face_registrar.register(cedula, desc)
     if not success:
-        raise HTTPException(status_code=400, detail=message)
-
-    return {"message": message}
+        raise HTTPException(status_code=400, detail=payload)
+    return payload
 
 @app.post("/recognize/")
 async def recognize_face(file: UploadFile = File(...)):
-    contents = await file.read()
-    image = Image.open(BytesIO(contents)).convert("RGB")
-    frame = np.array(image)
-    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-
-    faces = detect_faces(frame)
+    if not face_recognizer:
+        raise HTTPException(status_code=500, detail="Servicio no inicializado")
+    content = await file.read()
+    try:
+        img = Image.open(BytesIO(content)).convert("RGB")
+        img_np = np.array(img)[:, :, ::-1]
+    except Exception:
+        raise HTTPException(status_code=400, detail="Imagen inválida")
+    faces = detect_faces(img_np)
     if not faces:
-        raise HTTPException(status_code=400, detail="No se detectó ningún rostro en la imagen.")
-
+        raise HTTPException(status_code=400, detail="No se detectó rostro")
     x, y, w, h = faces[0]
-    face_img = frame[y:y+h, x:x+w]
-    descriptor = get_face_descriptor(face_img)
-
-    if descriptor is None:
-        raise HTTPException(status_code=400, detail="No se pudo obtener el descriptor del rostro.")
-
-    name, distance = face_recognizer.recognize(descriptor)
+    face_img = img_np[y:y+h, x:x+w]
+    desc = get_face_descriptor(face_img)
+    if desc is None:
+        raise HTTPException(status_code=500, detail="No se pudo calcular descriptor")
+    name, dist = face_recognizer.recognize(desc)
     if not name:
-        return {"recognized": False, "message": "Rostro no reconocido."}
-
-    match = re.search(r'\((\d+)\)', name)
-    cedula_recognized = match.group(1) if match else None
-
-    c.execute("""
-        SELECT nombre, nombre2, apellido1, apellido2, cedula
-        FROM personas
-        WHERE cedula = %s AND activo = TRUE
-    """, (cedula_recognized,))
-    row = c.fetchone()
-
-    if not row:
-        return {
-            "recognized": True,
-            "name": name,
-            "cedula": cedula_recognized,
-            "distance": float(distance),
-            "message": "Rostro reconocido pero no hay datos completos o activo en DB"
-        }
-
-    nombre1, nombre2, apellido1, apellido2, cedula_db = row
-
-    return {
-        "recognized": True,
-        "cedula": cedula_db,
-        "nombre1": nombre1,
-        "nombre2": nombre2,
-        "apellido1": apellido1,
-        "apellido2": apellido2,
-        "distance": float(distance)
-    }
+        return {"recognized": False}
+    m = re.search(r"\((\d+)\)", name)
+    ced = m.group(1) if m else None
+    c.execute("SELECT nombre, nombre2, apellido1, apellido2, cedula FROM personas WHERE cedula = %s AND activo = TRUE", (ced,))
+    info = c.fetchone()
+    if not _get_id_from_row(info) and not ced:
+        return {"recognized": True, "name": name, "distance": float(dist)}
+    n1, n2, a1, a2, ced_db = _person_fields_from_row(info)
+    return {"recognized": True, "cedula": ced_db, "nombre1": n1, "apellido1": a1, "distance": float(dist)}
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

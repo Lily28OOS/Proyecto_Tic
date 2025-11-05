@@ -1,19 +1,46 @@
-# app.py
+# app.py - utilidades para reconocimiento facial
+# No ejecutar este archivo directamente; el entrypoint de la aplicación es main.py
 import cv2
 import numpy as np
 from face_recognition import get_face_descriptor, detect_faces
-from database import connect_db, load_faces_from_db
+from database import connect_db, load_faces_from_db, close_db
 
 class FaceRecognizer:
     def __init__(self):
         # Conectar a la base de datos
-        self.conn, self.c = connect_db()
+        try:
+            self.conn, self.c = connect_db()
+        except Exception as e:
+            # Si no se puede conectar, lanzar excepción clara
+            raise RuntimeError(f"No se pudo conectar a la base de datos: {e}")
+
         # Cargar únicamente rostros de personas activas
-        self.face_db = [(name, self.normalize(desc)) for name, desc in load_faces_from_db(self.c)]
+        faces = load_faces_from_db(self.c)
+        self.face_db = []
+        for name, desc in faces:
+            try:
+                self.face_db.append((name, self.normalize(desc)))
+            except Exception:
+                # omitir descriptores inválidos
+                continue
 
     def normalize(self, v):
         norm = np.linalg.norm(v)
         return v / norm if norm > 0 else v
+
+    def refresh(self):
+        """Recargar descriptores desde la base de datos (útil si se registraron rostros sin reiniciar)."""
+        try:
+            faces = load_faces_from_db(self.c)
+            self.face_db = []
+            for name, desc in faces:
+                try:
+                    self.face_db.append((name, self.normalize(desc)))
+                except Exception:
+                    continue
+            return True
+        except Exception:
+            return False
 
     def resize_image(self, image_bgr, max_width=800):
         """Reduce el tamaño de la imagen si es muy grande, para mejorar el rendimiento."""
@@ -46,7 +73,6 @@ class FaceRecognizer:
 
         faces = detect_faces(image_bgr)
         if not faces:
-            print("[INFO] No se detectaron rostros.")
             return None, None
 
         x, y, w, h = faces[0]
@@ -54,7 +80,6 @@ class FaceRecognizer:
         # Validar tamaño mínimo del rostro detectado
         MIN_FACE_SIZE = 60
         if w < MIN_FACE_SIZE or h < MIN_FACE_SIZE:
-            print("[WARNING] Rostro demasiado pequeño para reconocimiento.")
             return None, None
 
         # Padding dinámico (20% del tamaño del rostro)
@@ -68,27 +93,20 @@ class FaceRecognizer:
         descriptor = get_face_descriptor(face_img)
 
         if descriptor is None or len(descriptor) == 0:
-            print("[ERROR] No se pudo obtener descriptor válido del rostro.")
             return None, None
 
         descriptor = self.normalize(descriptor)
         return self.recognize_face_with_distance(descriptor)
 
     def close(self):
-        self.conn.close()
-
-# Uso de prueba manual
-if __name__ == "__main__":
-    recognizer = FaceRecognizer()
-    img = cv2.imread("test_image.jpg")
-
-    if img is None:
-        print("No se pudo cargar la imagen de prueba.")
-    else:
-        name, dist = recognizer.recognize_from_image(img)
-        if name:
-            print(f"✅ Rostro reconocido: {name} (distancia {dist:.3f})")
-        else:
-            print("❌ Rostro no reconocido.")
-
-    recognizer.close()
+        # Devolver la conexión al pool o cerrarla correctamente
+        try:
+            close_db(self.conn, self.c)
+        except Exception:
+            try:
+                if self.c:
+                    self.c.close()
+                if self.conn:
+                    self.conn.close()
+            except Exception:
+                pass

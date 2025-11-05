@@ -1,81 +1,93 @@
 # Proyecto_Tic
 
 ## Descripción
-
-Proyecto_Tic es una API web desarrollada con FastAPI para el registro y reconocimiento facial de personas. Permite registrar usuarios mediante el envío de una imagen y sus datos personales, y posteriormente reconocerlos a partir de una foto. Utiliza técnicas de reconocimiento facial con OpenCV y NumPy, y almacena la información en una base de datos.
+API web (FastAPI) para registro y reconocimiento facial. Permite sincronizar usuarios desde una API externa (por idPersonal), guardar la metadata recibida, registrar descriptores faciales y reconocer personas por imagen.
 
 ## Características
+- Sincronización desde API externa (buscar por idPersonal) y guardado de metadata.
+- Registro de usuarios y descriptores faciales (tabla `codificaciones_faciales`).
+- Reconocimiento facial usando DeepFace / RetinaFace / Haarcascade (según configuración).
+- Documentación automática (Swagger / ReDoc).
+- Soporte CORS básico.
+- Base de datos PostgreSQL con tablas creadas automáticamente.
 
-- Registro de usuarios con foto y datos personales.
-- Reconocimiento facial a partir de imágenes.
-- API RESTful documentada automáticamente.
-- Soporte para CORS.
-- Base de datos para almacenar usuarios y descriptores faciales.
-- Soporte para DeepFace, RetinaFace y Haarcascade para la detección y reconocimiento facial.
+## Requisitos previos (importante)
+1. Instalar CMake (requisito para algunas dependencias nativas):
+   - Descarga: https://cmake.org/download/
+   - En Windows con Chocolatey (PowerShell como administrador):  
+     choco install cmake -y
+   - Asegúrate de que `cmake` esté en el PATH antes de instalar dependencias Python.
 
-## Tecnologías utilizadas
+2. Tener PostgreSQL accesible y crear la base de datos (por ejemplo `biometria`) o ajustar variables de entorno para tu DB.
 
+## Tecnologías
 - Python 3.8+
-- FastAPI
-- Uvicorn
-- OpenCV
-- NumPy
-- Pillow
-- PostgreSQL
-- DeepFace
-- RetinaFace
-- Haarcascade (OpenCV)
-- face_recognition (módulo propio o externo)
-- Visual Studio Code
+- FastAPI, Uvicorn
+- OpenCV, NumPy, Pillow
+- PostgreSQL (psycopg2)
+- DeepFace / RetinaFace / Haarcascade (según uso)
+- Módulo local `face_recognition.py`
 
-## Instalación
+## Instalación (Windows)
+1. Clonar repositorio:
+   - git clone https://github.com/Lily28OOS/Proyecto_Tic.git
+   - cd Proyecto_Tic-master
 
-1. **Clona el repositorio:**
-- git clone https://github.com/Lily28OOS/Proyecto_Tic.git cd Proyecto_Tic-master
-2. **Crea un entorno virtual (opcional pero recomendado):**
-- python -m venv venv venv\Scripts\activate
-3. **Instala las dependencias:**
-- pip install -r requirements.txt
-4. **Configura la base de datos:**
-- Edita el archivo `database.py` para poner tus credenciales y parámetros de conexión.
-- Asegúrate de tener la base de datos y las tablas necesarias creadas.
+2. Crear y activar entorno virtual:
+   - python -m venv .venv
+   - .venv\Scripts\activate
 
-## Uso
+3. Instalar dependencias:
+   - pip install -r requirements.txt
 
-1. **Inicia el servidor:**
-- python main.py
-2. **Accede a la documentación interactiva:**
-- [http://localhost:8000/docs](http://localhost:8000/docs) (Swagger UI)
-- [http://localhost:8000/redoc](http://localhost:8000/redoc) (ReDoc)
+4. Configurar conexión a la BD (opcional por variables de entorno):
+   - DB_NAME, DB_USER, DB_PASS, DB_HOST, DB_PORT, DB_POOL_MIN, DB_POOL_MAX
+   - Ejemplo (PowerShell):
+     $env:DB_NAME="biometria"; $env:DB_USER="postgres"; $env:DB_PASS="admin"; $env:DB_HOST="localhost"; $env:DB_PORT="5433"
 
-3. **Prueba los endpoints:**
-- `/register/` para registrar un usuario (requiere imagen y datos).
-- `/recognize/` para reconocer un usuario a partir de una imagen.
+5. Ejecutar la aplicación (inicializará tablas si es necesario):
+   - uvicorn main:app --reload
+   - o: python main.py
 
-4. **Interfaz HTML (opcional):**
-- Abre el archivo `test.html` en tu navegador para probar la API desde un formulario web.
+## Uso (endpoints principales)
+- Sincronizar usuario desde API externa (recibe idPersonal):
+  - POST /sync_user/ form-data: idpersonal=81427
+  - Ejemplo curl (PowerShell):
+    curl -X POST "http://localhost:8000/sync_user/" -F "idpersonal=81427"
+
+- Registrar descriptor facial (upload imagen + cedula):
+  - POST /register/ form-data: cedula=01020304, file=@foto.jpg
+  - Ejemplo:
+    curl -X POST "http://localhost:8000/register/" -F "cedula=01020304" -F "file=@C:\ruta\foto.jpg"
+
+- Reconocer rostro:
+  - POST /recognize/ form-data: file=@foto.jpg
+  - Ejemplo:
+    curl -X POST "http://localhost:8000/recognize/" -F "file=@C:\ruta\foto.jpg"
+
+- Documentación:
+  - http://localhost:8000/docs
+  - http://localhost:8000/redoc
 
 ## Estructura del proyecto
-Proyecto_Tic-master/ 
-│ 
-├── main.py # Archivo principal de la API 
-├── database.py # Conexión y funciones de base de datos 
-├── face_recognition.py # Funciones de reconocimiento facial 
-├── test.py # Interfaz de prueba (opcional) 
-├── requirements.txt # Dependencias del proyecto 
-└── README.md
+Proyecto_Tic
+├── .venv
+├── app.py
+├── database.py
+├── face_recognition.py
+├── main.py         # entrypoint principal (FastAPI)
+├── register.py
+├── README.md
+├── requirements.txt
+└── ...
 
-## Notas
-
-- Asegúrate de tener instaladas las dependencias y la base de datos configurada antes de ejecutar el proyecto.
-- Puedes modificar los umbrales de reconocimiento facial en `main.py` según tus necesidades.
-- Si tienes problemas con las dependencias, revisa la versión de Python y los paquetes instalados.
+## Notas importantes
+- El campo `idPersonal` de la API externa no es la cédula; la API externa debe devolver la `cedula` en la respuesta para crear la persona local. El flujo es: sync (/sync_user) por idPersonal → guarda metadata y `cedula` → luego register/recognize usan la `cedula` local.
+- Asegúrate de que las funciones detect_faces() y get_face_descriptor() en `face_recognition.py` devuelvan formatos compatibles (listas o numpy arrays).
+- En producción revisa CORS y límites de subida de archivos, y configura el pool de conexiones según la carga.
 
 ## Créditos
-
-Desarrollado por Delgado Benavides y Farias Palma.  
-Basado en FastAPI y tecnologías de código abierto.
+Delgado Benavides y Farias Palma.
 
 ## Licencia
-
-Este proyecto está bajo la licencia .
+MIT
