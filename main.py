@@ -96,40 +96,81 @@ app.add_middleware(
 )
 
 # Conexión y carga inicial
-conn, c = connect_db()
-face_db = load_faces_from_db(c)
+conn, c = None, None
+face_db = []
 
-face_registrar = FaceRegistrar(c, conn, face_db)
-face_recognizer = FaceRecognizer(face_db)
+face_registrar = None
+face_recognizer = None
+
+@app.on_event("startup")
+async def startup():
+    global conn, c, face_db, face_registrar, face_recognizer
+    conn, c = connect_db()
+    raw_faces = load_faces_from_db(c)  # espera lista [(name, descriptor_list), ...]
+    # convertir a numpy arrays y normalizar
+    face_db = []
+    for name, desc in raw_faces:
+        arr = np.array(desc, dtype=float)
+        norm = np.linalg.norm(arr)
+        face_db.append((name, arr / norm if norm > 0 else arr))
+    face_registrar = FaceRegistrar(c, conn, face_db)
+    face_recognizer = FaceRecognizer(face_db)
+
+@app.on_event("shutdown")
+async def shutdown():
+    try:
+        if c:
+            c.close()
+    except Exception:
+        pass
+    try:
+        if conn:
+            conn.close()
+    except Exception:
+        pass
 
 # --- Endpoints --- #
 
 @app.post("/sync_user/")
 async def sync_user(cedula: str = Form(...)):
-    api_url = "http://172.16.226.42:3000/administracion/usuario/v1/buscar_por_cedula"
-    payload = {"cedula": cedula}
+    api_url = "http://localhost:3000/administracion/usuario/v1/buscar_por_idpersonal"
+    # la API espera idPersonal en el payload
+    payload = {"idPersonal": cedula}
 
     try:
-        response = requests.post(api_url, json=payload)
+        response = requests.post(api_url, json=payload, timeout=10)
         response.raise_for_status()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al conectar con API externa: {e}")
 
     data = response.json()
+    # respuesta esperada: p_status y p_data.p_usuarios
     if not data.get("p_status") or not data.get("p_data", {}).get("p_usuarios"):
         raise HTTPException(status_code=404, detail="Usuario no encontrado en API externa")
 
     usuario = data["p_data"]["p_usuarios"][0]
 
-    # Separar nombre completo en apellidos y nombres
-    partes = usuario["persona"].split()
-    apellido1 = partes[0] if len(partes) > 0 else ""
-    apellido2 = partes[1] if len(partes) > 1 else ""
-    nombre1 = partes[2] if len(partes) > 2 else ""
-    nombre2 = " ".join(partes[3:]) if len(partes) > 3 else ""
+    # Preferir campos explícitos si existen, fallback a cadena completa
+    persona_str = usuario.get("persona") or usuario.get("nombre_completo") or ""
+    nombres = usuario.get("nombres") or usuario.get("nombres_persona")
+    apellidos = usuario.get("apellidos") or usuario.get("apellidos_persona")
+
+    if nombres and apellidos:
+        nombre_parts = nombres.split()
+        apellido_parts = apellidos.split()
+        nombre1 = nombre_parts[0] if nombre_parts else ""
+        nombre2 = " ".join(nombre_parts[1:]) if len(nombre_parts) > 1 else ""
+        apellido1 = apellido_parts[0] if apellido_parts else ""
+        apellido2 = " ".join(apellido_parts[1:]) if len(apellido_parts) > 1 else ""
+    else:
+        partes = persona_str.split()
+        apellido1 = partes[0] if len(partes) > 0 else ""
+        apellido2 = partes[1] if len(partes) > 1 else ""
+        nombre1 = partes[2] if len(partes) > 2 else ""
+        nombre2 = " ".join(partes[3:]) if len(partes) > 3 else ""
 
     # Verificar si ya existe
-    c.execute("SELECT id FROM personas WHERE cedula = %s", (usuario["cedula"],))
+    c.execute("SELECT id FROM personas WHERE cedula = %s", (usuario.get("cedula") or cedula,))
     row = c.fetchone()
     if row:
         return {"message": "Usuario ya existe en la base de datos", "id": row[0]}
@@ -140,7 +181,7 @@ async def sync_user(cedula: str = Form(...)):
             INSERT INTO personas (cedula, nombre, nombre2, apellido1, apellido2, activo)
             VALUES (%s, %s, %s, %s, %s, FALSE) RETURNING id
         """, (
-            usuario["cedula"], nombre1, nombre2, apellido1, apellido2
+            usuario.get("cedula") or cedula, nombre1, nombre2, apellido1, apellido2
         ))
         persona_id = c.fetchone()[0]
         conn.commit()
@@ -151,7 +192,7 @@ async def sync_user(cedula: str = Form(...)):
     return {
         "message": "Usuario sincronizado correctamente",
         "persona_id": persona_id,
-        "cedula": usuario["cedula"],
+        "cedula": usuario.get("cedula") or cedula,
         "nombre1": nombre1,
         "nombre2": nombre2,
         "apellido1": apellido1,
