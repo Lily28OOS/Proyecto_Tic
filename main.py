@@ -11,6 +11,8 @@ from database import connect_db, load_faces_from_db
 import uvicorn
 import json
 import re
+import hnswlib
+import os
 
 # --- Helpers mínimos (español) --- #
 def _get_id_from_row(row):
@@ -106,6 +108,11 @@ class FaceRecognizer:
             return best, float(best_dist)
         return None, None
 
+# ANN (hnswlib) - integración mínima en este archivo
+ANN_INDEX_PATH = "face_index.bin"
+ann = None
+_ann_next_id = 0
+
 # --- App --- #
 app = FastAPI(title="Face Recognition API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -133,6 +140,36 @@ async def startup():
     face_db = cleaned
     face_registrar = FaceRegistrar(c, conn, face_db)
     face_recognizer = FaceRecognizer(face_db)
+    global ann, _ann_next_id
+    # detectar dimensión del embedding (fallback 512)
+    dim = 512
+    if face_db and len(face_db[0]) > 1:
+        try:
+            dim = int(face_db[0][1].shape[0])
+        except Exception:
+            dim = 512
+    try:
+        ann = hnswlib.Index(space='l2', dim=dim)
+        if os.path.exists(ANN_INDEX_PATH):
+            ann.load_index(ANN_INDEX_PATH)
+            ann.set_ef(50)
+            _ann_next_id = ann.get_current_count()
+        else:
+            max_elements = max(1000, len(face_db) * 2)
+            ann.init_index(max_elements=max_elements, ef_construction=200, M=48)
+            if face_db:
+                ids = list(range(len(face_db)))
+                vecs = [np.array(v, dtype=np.float32) for _, v in face_db]
+                ann.add_items(np.vstack(vecs), ids)
+                ann.set_ef(50)
+                try:
+                    ann.save_index(ANN_INDEX_PATH)
+                except Exception:
+                    pass
+            _ann_next_id = ann.get_current_count()
+    except Exception:
+        ann = None
+        _ann_next_id = len(face_db)
 
 @app.on_event("shutdown")
 async def shutdown():

@@ -7,8 +7,12 @@ import time
 import threading
 
 print("[INFO] Cargando modelo ArcFace...")
-model = DeepFace.build_model("ArcFace")
-print("[INFO] Modelo cargado.")
+try:
+    model = DeepFace.build_model("ArcFace")
+    print("[INFO] Modelo ArcFace cargado.")
+except Exception as e:
+    print(f"[WARN] No se pudo cargar modelo ArcFace: {e}")
+    model = None
 
 class MixedFaceDetector:
     def __init__(self):
@@ -103,21 +107,45 @@ class MixedFaceDetector:
 def get_face_descriptor(image):
     try:
         start = time.time()
-        result = DeepFace.represent(
-            img_path=image,
-            model_name="ArcFace",
-            detector_backend="skip",
-            enforce_detection=False
-        )
-        embedding = result[0]['embedding']
-        embedding = np.array(embedding)
-        embedding_norm = embedding / np.linalg.norm(embedding)
+        # usar la instancia de modelo si está disponible (evita recargas)
+        if model is not None:
+            result = DeepFace.represent(
+                img_path=image,
+                model=model,
+                model_name="ArcFace",
+                detector_backend="skip",
+                enforce_detection=False
+            )
+        else:
+            # fallback: DeepFace construirá/usa su propio modelo (más lento)
+            result = DeepFace.represent(
+                img_path=image,
+                model_name="ArcFace",
+                detector_backend="skip",
+                enforce_detection=False
+            )
+
+        if not result:
+            return None
+
+        # soportar estructuras que devuelvan lista de dicts o listas
+        entry = result[0]
+        embedding = entry.get('embedding') if isinstance(entry, dict) else entry
+        if embedding is None:
+            return None
+
+        embedding = np.array(embedding, dtype=np.float32)
+        norm = np.linalg.norm(embedding)
+        if norm <= 0:
+            return None
+        embedding_norm = embedding / norm
+
         elapsed = time.time() - start
         print(f"[INFO] get_face_descriptor: tiempo de extracción = {elapsed:.3f} segundos")
         return embedding_norm
     except Exception as e:
         print(f"[Error get_face_descriptor] {e}")
-        return np.zeros(512)
+        return None
 
 # Instancia global
 _detector_instance = MixedFaceDetector()
