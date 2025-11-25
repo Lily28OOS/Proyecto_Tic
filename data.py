@@ -1,81 +1,88 @@
-#recibir los datos de la api del sga
 import requests
-from typing import Tuple, Any
-import sys
 import json
 import argparse
+import os
+import sys
+import time
+import random
 
-DEFAULT_URL = "http://localhost:3000/administracion/usuario/v1/buscar_por_idpersonal"
+DEFAULT_URL = os.getenv(
+    "SGA_URL",
+    "http://172.16.226.42:3000/administracion/usuario/v1/buscar_por_idpersonal",
+)
 
-def buscar_por_idpersonal(idpersonal: str, url: str = DEFAULT_URL, timeout: int = 10) -> Tuple[int, Any]:
-    """
-    Llama al endpoint de búsqueda por idPersonal.
-    Envía JSON {"idPersonal": idpersonal} por POST y devuelve (status_code, json o text).
-    """
-    payload = {"idPersonal": idpersonal}
+# Lista de IDs disponibles para elegir uno al azar
+RANDOM_IDS = ["81427", "12345", "56789", "99887", "44112"]
+
+def fetch_by_id(idpersonal: str, url: str = DEFAULT_URL, timeout: int = 10):
+    payload = {"idPersonal": idpersonal, "idpersonal": idpersonal}
     headers = {"Content-Type": "application/json"}
     try:
+        print(f"Estado: Enviando solicitud a {url} con idpersonal={idpersonal} ...")
         resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
-        content_type = resp.headers.get("Content-Type", "")
-        if "application/json" in content_type:
-            return resp.status_code, resp.json()
-        return resp.status_code, resp.text
     except requests.RequestException as e:
-        return 0, {"error": str(e)}
-
-def pretty_print_response(status: int, data: Any) -> None:
-    if status == 0:
-        print("Error de conexión:", data)
-        return
-    print(f"HTTP status: {status}")
-    if isinstance(data, (dict, list)):
-        print(json.dumps(data, indent=2, ensure_ascii=False))
-    else:
-        print(data)
-
-def extract_id_from_text(text: str) -> str:
-    text = text.strip()
-    # intentar parsear JSON si el usuario pegó un objeto
+        print(f"Estado: Error de conexión -> {e}")
+        return None, str(e)
+    print(f"Estado: Respuesta recibida (HTTP {resp.status_code})")
     try:
-        obj = json.loads(text)
-        return str(obj.get("idpersonal") or obj.get("idPersonal") or obj.get("id_personal"))
+        return resp.json(), None
     except Exception:
-        # si es solo un número o string, devolver tal cual
-        return text
+        return resp.text, None
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Llamar buscar_por_idpersonal")
+def find_matches(data, idpersonal: str):
+    matches = []
+    id_str = str(idpersonal)
+    usuarios = []
+    if isinstance(data, dict):
+        usuarios = data.get("p_data", {}).get("p_usuarios") or []
+    if not isinstance(usuarios, list):
+        return matches
+    for u in usuarios:
+        if not isinstance(u, dict):
+            continue
+        for k in ("idpersonal", "idPersonal", "id_personal"):
+            v = u.get(k)
+            if v is None:
+                continue
+            if str(v) == id_str:
+                matches.append(u)
+                break
+    return matches
+
+def main():
+    parser = argparse.ArgumentParser(description="Buscar usuario por idPersonal y mostrar datos")
     parser.add_argument("idpersonal", nargs="?", help="idPersonal (ej: 81427)")
     parser.add_argument("--url", "-u", help="URL del endpoint", default=DEFAULT_URL)
+    parser.add_argument("--timeout", "-t", type=int, default=10, help="Timeout en segundos")
     args = parser.parse_args()
 
-    id_val = None
-    # 1) argumento en línea de comandos
-    if args.idpersonal:
-        id_val = extract_id_from_text(args.idpersonal)
-    else:
-        # 2) entrada por pipe (stdin)
-        try:
-            if not sys.stdin.isatty():
-                stdin = sys.stdin.read()
-                if stdin.strip():
-                    id_val = extract_id_from_text(stdin)
-        except Exception:
-            pass
-
-    # 3) prompt interactivo si aún no hay id
+    # Si no hay ID → escoger uno al azar
+    id_val = args.idpersonal
     if not id_val:
-        try:
-            raw = input("Ingrese idPersonal (ej: 81427) o pegue JSON {\"idpersonal\":81427}: ").strip()
-            if raw:
-                id_val = extract_id_from_text(raw)
-        except KeyboardInterrupt:
-            print("\nCancelado.")
-            sys.exit(1)
+        id_val = random.choice(RANDOM_IDS)
+        print(f"No se proporcionó idPersonal. Usando uno al azar: {id_val}")
 
-    if not id_val:
-        print("Uso:\n  python data.py 81427\n  echo '{\"idpersonal\":81427}' | python data.py\n  python data.py --url http://host:3000/... 81427")
+    data, err = fetch_by_id(id_val, url=args.url, timeout=args.timeout)
+    if err:
+        print("Error:", err)
         sys.exit(1)
 
-    status, data = buscar_por_idpersonal(id_val, url=args.url)
-    pretty_print_response(status, data)
+    if isinstance(data, (str, bytes)):
+        print("Respuesta no JSON de la API:")
+        print(data)
+        sys.exit(0)
+
+    matches = find_matches(data, id_val)
+    if not matches:
+        print(f"No se encontró usuario con idPersonal = {id_val}")
+        usuarios = data.get("p_data", {}).get("p_usuarios") or []
+        if usuarios:
+            print(f"La API devolvió {len(usuarios)} registro(es). Puedes revisar la respuesta completa con --debug.")
+        sys.exit(0)
+
+    for i, u in enumerate(matches, 1):
+        print(f"--- Usuario {i} ---")
+        print(json.dumps(u, indent=2, ensure_ascii=False))
+
+if __name__ == "__main__":
+    main()

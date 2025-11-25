@@ -122,54 +122,89 @@ face_db = []
 face_registrar = None
 face_recognizer = None
 
+# global flag para indicar si la BD está disponible
+DB_OK = True
+
 @app.on_event("startup")
 async def startup():
-    global conn, c, face_db, face_registrar, face_recognizer
-    conn, c = connect_db()
-    raw = load_faces_from_db(c)  # [(name, descriptor), ...]
-    cleaned = []
-    for name, desc in raw:
-        try:
-            a = np.array(desc, dtype=float)
-            n = np.linalg.norm(a)
-            if n > 0:
-                a = a / n
-            cleaned.append((name, a))
-        except Exception:
-            continue
-    face_db = cleaned
-    face_registrar = FaceRegistrar(c, conn, face_db)
-    face_recognizer = FaceRecognizer(face_db)
-    global ann, _ann_next_id
-    # detectar dimensión del embedding (fallback 512)
-    dim = 512
-    if face_db and len(face_db[0]) > 1:
-        try:
-            dim = int(face_db[0][1].shape[0])
-        except Exception:
-            dim = 512
+    """
+    Arranque: intenta conectar a la BD y cargar datos dependientes de ella.
+    Si la conexión falla (p. ej. error del pool que lanza AttributeError), se marca DB_OK = False
+    y se omite la inicialización dependiente de la BD para que la app siga levantando.
+    """
+    global conn, c, face_db, face_registrar, face_recognizer, ann, _ann_next_id, DB_OK
+    conn, c = None, None
     try:
-        ann = hnswlib.Index(space='l2', dim=dim)
-        if os.path.exists(ANN_INDEX_PATH):
-            ann.load_index(ANN_INDEX_PATH)
-            ann.set_ef(50)
-            _ann_next_id = ann.get_current_count()
-        else:
-            max_elements = max(1000, len(face_db) * 2)
-            ann.init_index(max_elements=max_elements, ef_construction=200, M=48)
-            if face_db:
-                ids = list(range(len(face_db)))
-                vecs = [np.array(v, dtype=np.float32) for _, v in face_db]
-                ann.add_items(np.vstack(vecs), ids)
+        conn, c = connect_db()
+    except Exception as e:
+        DB_OK = False
+        # Mensaje mínimo para diagnóstico en consola
+        print(f"[WARN] BD no disponible en startup, se omitirá inicialización dependiente de BD: {e}")
+        return
+
+    # Si la conexión fue exitosa, continuar con la inicialización normal
+    try:
+        raw = load_faces_from_db(c)  # [(name, descriptor), ...]
+        cleaned = []
+        for name, desc in raw:
+            try:
+                a = np.array(desc, dtype=float)
+                n = np.linalg.norm(a)
+                if n > 0:
+                    a = a / n
+                cleaned.append((name, a))
+            except Exception:
+                continue
+        face_db = cleaned
+        face_registrar = FaceRegistrar(c, conn, face_db)
+        face_recognizer = FaceRecognizer(face_db)
+        # ANN init...
+        dim = 512
+        if face_db and len(face_db[0]) > 1:
+            try:
+                dim = int(face_db[0][1].shape[0])
+            except Exception:
+                dim = 512
+        try:
+            ann = hnswlib.Index(space='l2', dim=dim)
+            if os.path.exists(ANN_INDEX_PATH):
+                ann.load_index(ANN_INDEX_PATH)
                 ann.set_ef(50)
-                try:
-                    ann.save_index(ANN_INDEX_PATH)
-                except Exception:
-                    pass
-            _ann_next_id = ann.get_current_count()
+                _ann_next_id = ann.get_current_count()
+            else:
+                max_elements = max(1000, len(face_db) * 2)
+                ann.init_index(max_elements=max_elements, ef_construction=200, M=48)
+                if face_db:
+                    ids = list(range(len(face_db)))
+                    vecs = [np.array(v, dtype=np.float32) for _, v in face_db]
+                    ann.add_items(np.vstack(vecs), ids)
+                    ann.set_ef(50)
+                    try:
+                        ann.save_index(ANN_INDEX_PATH)
+                    except Exception:
+                        pass
+                _ann_next_id = ann.get_current_count()
+        except Exception:
+            ann = None
+            _ann_next_id = len(face_db)
     except Exception:
-        ann = None
-        _ann_next_id = len(face_db)
+        # Si ocurre cualquier error posterior, cerrar conexión y marcar BD indisponible
+        try:
+            if conn:
+                conn.rollback()
+        except Exception:
+            pass
+        try:
+            if c: c.close()
+        except Exception:
+            pass
+        try:
+            if conn: conn.close()
+        except Exception:
+            pass
+        DB_OK = False
+        print("[WARN] Error inicializando componentes dependientes de BD; omitiendo. Revisa logs.")
+        return
 
 @app.on_event("shutdown")
 async def shutdown():
@@ -185,7 +220,18 @@ async def shutdown():
 
 @app.post("/sync_user/")
 async def sync_user(idpersonal: str = Form(...)):
-    api_url = "http://localhost:3000/administracion/usuario/v1/buscar_por_idpersonal"
+    """
+    Si la BD no está disponible por el error detectado (DB_OK == False), se omite la llamada
+    a la API externa y se devuelve un mensaje informando que la sincronización fue saltada.
+    """
+    if not DB_OK:
+        return {
+            "skipped": True,
+            "idpersonal": idpersonal,
+            "message": "Sincronización omitida: base de datos no disponible en este momento (error de pool)."
+        }
+
+    api_url = "http://172.16.226.42:3000/administracion/usuario/v1/buscar_por_idpersonal"
     try:
         r = requests.post(api_url, json={"idPersonal": idpersonal}, timeout=10)
         r.raise_for_status()
@@ -213,20 +259,32 @@ async def sync_user(idpersonal: str = Form(...)):
     if _get_id_from_row(c.fetchone()):
         # actualizar metadata si existe
         try:
-            c.execute("INSERT INTO persona_metadata (persona_id, metadata) VALUES (%s, %s) ON CONFLICT (persona_id) DO UPDATE SET metadata = EXCLUDED.metadata", (_get_id_from_row(c.fetchone()), json.dumps(usuario, ensure_ascii=False)))
+            c.execute(
+                "INSERT INTO persona_metadata (persona_id, metadata) VALUES (%s, %s) "
+                "ON CONFLICT (persona_id) DO UPDATE SET metadata = EXCLUDED.metadata",
+                (_get_id_from_row(c.fetchone()), json.dumps(usuario, ensure_ascii=False))
+            )
             conn.commit()
         except Exception:
             conn.rollback()
         return {"message": "Usuario ya existe"}
 
     try:
-        c.execute("INSERT INTO personas (cedula, nombre, nombre2, apellido1, apellido2, activo) VALUES (%s,%s,%s,%s,%s,FALSE) RETURNING id", (cedula, n1, n2, a1, a2))
+        c.execute(
+            "INSERT INTO personas (cedula, nombre, nombre2, apellido1, apellido2, activo) "
+            "VALUES (%s,%s,%s,%s,%s,FALSE) RETURNING id",
+            (cedula, n1, n2, a1, a2)
+        )
         new_id = _get_id_from_row(c.fetchone())
         if not new_id:
             c.execute("SELECT id FROM personas WHERE cedula = %s", (cedula,))
             new_id = _get_id_from_row(c.fetchone())
         try:
-            c.execute("INSERT INTO persona_metadata (persona_id, metadata) VALUES (%s, %s) ON CONFLICT (persona_id) DO UPDATE SET metadata = EXCLUDED.metadata", (new_id, json.dumps(usuario, ensure_ascii=False)))
+            c.execute(
+                "INSERT INTO persona_metadata (persona_id, metadata) VALUES (%s, %s) "
+                "ON CONFLICT (persona_id) DO UPDATE SET metadata = EXCLUDED.metadata",
+                (new_id, json.dumps(usuario, ensure_ascii=False))
+            )
         except Exception:
             conn.rollback()
         conn.commit()

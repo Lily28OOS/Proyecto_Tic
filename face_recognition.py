@@ -105,44 +105,101 @@ class MixedFaceDetector:
         return boxes
 
 def get_face_descriptor(image):
+    """
+    Recibe:
+      - imagen numpy BGR (cv2.imread) o RGB,
+      - o ruta a archivo (str),
+      - o bytes de imagen.
+    Devuelve descriptor numpy normalizado (float32) o None si falla.
+    """
     try:
-        start = time.time()
-        # usar la instancia de modelo si está disponible (evita recargas)
-        if model is not None:
-            result = DeepFace.represent(
-                img_path=image,
-                model=model,
-                model_name="ArcFace",
-                detector_backend="skip",
-                enforce_detection=False
-            )
+        if model is None:
+            print("[ERROR] Modelo ArcFace no disponible")
+            return None
+
+        # Determinar si image es ndarray (imagen en memoria) o path/bytes
+        is_ndarray = isinstance(image, (np.ndarray, ))
+        is_path = isinstance(image, str)
+        is_bytes = isinstance(image, (bytes, bytearray))
+
+        img_arg = None
+        # preparar imagen para DeepFace: DeepFace puede aceptar img=ndarray o img_path=str
+        if is_ndarray:
+            # intentar convertir a RGB (DeepFace espera RGB)
+            try:
+                img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            except Exception:
+                img_rgb = image
+            img_arg = {"img": img_rgb}
+        elif is_path:
+            img_arg = {"img_path": image}
+        elif is_bytes:
+            # intentar decodificar bytes a ndarray
+            nparr = np.frombuffer(image, np.uint8)
+            img_np = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            try:
+                img_rgb = cv2.cvtColor(img_np, cv2.COLOR_BGR2RGB)
+            except Exception:
+                img_rgb = img_np
+            img_arg = {"img": img_rgb}
         else:
-            # fallback: DeepFace construirá/usa su propio modelo (más lento)
-            result = DeepFace.represent(
-                img_path=image,
-                model_name="ArcFace",
-                detector_backend="skip",
-                enforce_detection=False
-            )
+            # fallback: intentar tratar como path
+            img_arg = {"img_path": image}
 
-        if not result:
+        # llamar DeepFace.represent probando firmas distintas si hace falta
+        rep = None
+        try:
+            rep = DeepFace.represent(model=model, enforce_detection=False, detector_backend="skip", **img_arg)
+        except TypeError:
+            # versión que no acepta 'model' como keyword o acepta distinta firma
+            try:
+                if is_ndarray or is_bytes:
+                    rep = DeepFace.represent(img=img_arg.get("img"), model_name="ArcFace", enforce_detection=False, detector_backend="skip")
+                else:
+                    rep = DeepFace.represent(img_path=img_arg.get("img_path"), model_name="ArcFace", enforce_detection=False, detector_backend="skip")
+            except Exception as e2:
+                print(f"[ERROR] DeepFace.represent fallback error: {e2}")
+                rep = None
+        except Exception as e:
+            print(f"[ERROR] DeepFace.represent error: {e}")
+            rep = None
+
+        if not rep:
+            print("[ERROR] DeepFace.represent devolvió None o lista vacía")
             return None
 
-        # soportar estructuras que devuelvan lista de dicts o listas
-        entry = result[0]
-        embedding = entry.get('embedding') if isinstance(entry, dict) else entry
+        # extraer embedding soportando varias estructuras
+        embedding = None
+        try:
+            if isinstance(rep, dict) and "embedding" in rep:
+                embedding = rep["embedding"]
+            elif isinstance(rep, list):
+                first = rep[0]
+                if isinstance(first, dict) and "embedding" in first:
+                    embedding = first["embedding"]
+                elif isinstance(first, (list, np.ndarray, float, int)):
+                    # rep puede ser directamente una lista/vector
+                    if isinstance(first, (list, np.ndarray)):
+                        embedding = first
+                    else:
+                        # rep es lista de números
+                        embedding = rep
+            elif isinstance(rep, (list, np.ndarray)):
+                embedding = rep
+        except Exception:
+            embedding = None
+
         if embedding is None:
+            print("[ERROR] No se pudo extraer embedding de la salida de DeepFace")
             return None
 
-        embedding = np.array(embedding, dtype=np.float32)
-        norm = np.linalg.norm(embedding)
+        emb = np.array(embedding, dtype=np.float32)
+        norm = np.linalg.norm(emb)
         if norm <= 0:
+            print("[ERROR] Embedding con norma 0")
             return None
-        embedding_norm = embedding / norm
-
-        elapsed = time.time() - start
-        print(f"[INFO] get_face_descriptor: tiempo de extracción = {elapsed:.3f} segundos")
-        return embedding_norm
+        emb_norm = emb / norm
+        return emb_norm
     except Exception as e:
         print(f"[Error get_face_descriptor] {e}")
         return None
