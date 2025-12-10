@@ -1,88 +1,136 @@
-import requests
-import json
-import argparse
 import os
-import sys
-import time
+import json
 import random
+import requests
+import psycopg2
+from psycopg2 import pool
+from datetime import datetime
 
-DEFAULT_URL = os.getenv(
-    "SGA_URL",
-    "http://172.16.226.42:3000/administracion/usuario/v1/buscar_por_idpersonal",
+# Configuración desde variables de entorno
+DB_NAME = os.getenv("DB_NAME", "biometria")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASS = os.getenv("DB_PASS", "admin")
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = int(os.getenv("DB_PORT", "5433"))
+POOL_MINCONN = int(os.getenv("DB_POOL_MIN", "1"))
+POOL_MAXCONN = int(os.getenv("DB_POOL_MAX", "5"))
+
+DEFAULT_URL = "http://172.16.226.42:3000/administracion/usuario/v1/buscar_por_idpersonal"
+RANDOM_IDS = ["81427", "12345", "56789", "99887", "44112"]
+
+# Pool de conexiones
+db_pool = psycopg2.pool.SimpleConnectionPool(
+    POOL_MINCONN,
+    POOL_MAXCONN,
+    dbname=DB_NAME,
+    user=DB_USER,
+    password=DB_PASS,
+    host=DB_HOST,
+    port=DB_PORT
 )
 
-# Lista de IDs disponibles para elegir uno al azar
-RANDOM_IDS = ["81427", "12345", "56789", "99887", "44112"]
+# ============================================
+# Funciones
+# ============================================
 
 def fetch_by_id(idpersonal: str, url: str = DEFAULT_URL, timeout: int = 10):
     payload = {"idPersonal": idpersonal, "idpersonal": idpersonal}
     headers = {"Content-Type": "application/json"}
     try:
-        print(f"Estado: Enviando solicitud a {url} con idpersonal={idpersonal} ...")
+        print(f"Consultando API con idpersonal={idpersonal} ...")
         resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        return resp.json()
     except requests.RequestException as e:
-        print(f"Estado: Error de conexión -> {e}")
-        return None, str(e)
-    print(f"Estado: Respuesta recibida (HTTP {resp.status_code})")
-    try:
-        return resp.json(), None
-    except Exception:
-        return resp.text, None
+        print(f"Error en la API: {e}")
+        return None
 
-def find_matches(data, idpersonal: str):
-    matches = []
-    id_str = str(idpersonal)
-    usuarios = []
-    if isinstance(data, dict):
-        usuarios = data.get("p_data", {}).get("p_usuarios") or []
-    if not isinstance(usuarios, list):
-        return matches
-    for u in usuarios:
-        if not isinstance(u, dict):
-            continue
-        for k in ("idpersonal", "idPersonal", "id_personal"):
-            v = u.get(k)
-            if v is None:
-                continue
-            if str(v) == id_str:
-                matches.append(u)
-                break
-    return matches
+def create_table():
+    """Crea la tabla usuarios_temporal si no existe."""
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS usuarios_temporal (
+                id SERIAL PRIMARY KEY,
+                idpersonal BIGINT NOT NULL,
+                cedula VARCHAR(50) NOT NULL,
+                persona TEXT NOT NULL,
+                ubicacion TEXT,
+                correo_personal_institucional TEXT,
+                correo_personal_alternativo TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+        """)
+        conn.commit()
+        cur.close()
+        print("Tabla usuarios_temporal lista.")
+    finally:
+        db_pool.putconn(conn)
+
+def save_user(user):
+    """Guarda un usuario en la tabla separando cada campo."""
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        idpersonal = int(user.get("idpersonal") or 0)
+        cedula = user.get("cedula")
+        persona = user.get("persona")
+        ubicacion = user.get("ubicacion")
+        correo1 = user.get("correo_personal_institucional")
+        correo2 = user.get("correo_personal_alternativo")
+
+        # Validación mínima
+        if not cedula or not persona:
+            print(f"Registro con idpersonal={idpersonal} inválido, se omite.")
+            return
+
+        cur.execute("""
+            INSERT INTO usuarios_temporal
+            (idpersonal, cedula, persona, ubicacion, correo_personal_institucional, correo_personal_alternativo)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (idpersonal, cedula, persona, ubicacion, correo1, correo2))
+
+        conn.commit()
+        cur.close()
+    finally:
+        db_pool.putconn(conn)
+
+# ============================================
+# Script principal
+# ============================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Buscar usuario por idPersonal y mostrar datos")
-    parser.add_argument("idpersonal", nargs="?", help="idPersonal (ej: 81427)")
-    parser.add_argument("--url", "-u", help="URL del endpoint", default=DEFAULT_URL)
-    parser.add_argument("--timeout", "-t", type=int, default=10, help="Timeout en segundos")
-    args = parser.parse_args()
+    # Seleccionar ID al azar
+    id_val = random.choice(RANDOM_IDS)
+    print(f"ID aleatorio seleccionado: {id_val}")
 
-    # Si no hay ID → escoger uno al azar
-    id_val = args.idpersonal
-    if not id_val:
-        id_val = random.choice(RANDOM_IDS)
-        print(f"No se proporcionó idPersonal. Usando uno al azar: {id_val}")
+    # Consultar API
+    data = fetch_by_id(id_val)
+    if not data:
+        print("No se obtuvo respuesta de la API.")
+        return
 
-    data, err = fetch_by_id(id_val, url=args.url, timeout=args.timeout)
-    if err:
-        print("Error:", err)
-        sys.exit(1)
+    usuarios = data.get("p_data", {}).get("p_usuarios") or []
 
-    if isinstance(data, (str, bytes)):
-        print("Respuesta no JSON de la API:")
-        print(data)
-        sys.exit(0)
+    if not usuarios:
+        print("La API no devolvió usuarios.")
+        return
 
-    matches = find_matches(data, id_val)
-    if not matches:
-        print(f"No se encontró usuario con idPersonal = {id_val}")
-        usuarios = data.get("p_data", {}).get("p_usuarios") or []
-        if usuarios:
-            print(f"La API devolvió {len(usuarios)} registro(es). Puedes revisar la respuesta completa con --debug.")
-        sys.exit(0)
+    # Mostrar primer usuario como ejemplo
+    primer_usuario = usuarios[0]
+    print("\n===== Ejemplo de usuario =====")
+    print(json.dumps(primer_usuario, indent=2, ensure_ascii=False))
+    print("==============================")
 
-    for i, u in enumerate(matches, 1):
-        print(f"--- Usuario {i} ---")
-        print(json.dumps(u, indent=2, ensure_ascii=False))
+    # Crear tabla si no existe
+    create_table()
+
+    # Guardar todos los usuarios
+    print("Guardando usuarios en la base de datos...")
+    for u in usuarios:
+        save_user(u)
+    print(f"{len(usuarios)} usuarios guardados en usuarios_temporal.")
 
 if __name__ == "__main__":
     main()
