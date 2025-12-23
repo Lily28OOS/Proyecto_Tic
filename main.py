@@ -11,7 +11,6 @@ from database import connect_db, load_faces_from_db
 import uvicorn
 import json
 import re
-import hnswlib
 import os
 
 # --- Helpers mínimos (español) --- #
