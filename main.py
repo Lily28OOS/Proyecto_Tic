@@ -12,7 +12,6 @@ import uvicorn
 import json
 import re
 import os
-import hnswlib
 
 # --- Helpers mínimos (español) --- #
 def _get_id_from_row(row):
@@ -108,10 +107,8 @@ class FaceRecognizer:
             return best, float(best_dist)
         return None, None
 
-# ANN (hnswlib) - integración mínima en este archivo
-ANN_INDEX_PATH = "face_index.bin"
+# Se eliminó la integración con hnswlib; mantener variables locales sin índice ANN
 ann = None
-_ann_next_id = 0
 
 # --- App --- #
 app = FastAPI(title="Face Recognition API")
@@ -158,35 +155,8 @@ async def startup():
         face_db = cleaned
         face_registrar = FaceRegistrar(c, conn, face_db)
         face_recognizer = FaceRecognizer(face_db)
-        # ANN init...
-        dim = 512
-        if face_db and len(face_db[0]) > 1:
-            try:
-                dim = int(face_db[0][1].shape[0])
-            except Exception:
-                dim = 512
-        try:
-            ann = hnswlib.Index(space='l2', dim=dim)
-            if os.path.exists(ANN_INDEX_PATH):
-                ann.load_index(ANN_INDEX_PATH)
-                ann.set_ef(50)
-                _ann_next_id = ann.get_current_count()
-            else:
-                max_elements = max(1000, len(face_db) * 2)
-                ann.init_index(max_elements=max_elements, ef_construction=200, M=48)
-                if face_db:
-                    ids = list(range(len(face_db)))
-                    vecs = [np.array(v, dtype=np.float32) for _, v in face_db]
-                    ann.add_items(np.vstack(vecs), ids)
-                    ann.set_ef(50)
-                    try:
-                        ann.save_index(ANN_INDEX_PATH)
-                    except Exception:
-                        pass
-                _ann_next_id = ann.get_current_count()
-        except Exception:
-            ann = None
-            _ann_next_id = len(face_db)
+        # Sin ANN: no usamos hnswlib, mantenemos `ann = None`.
+        ann = None
     except Exception:
         # Si ocurre cualquier error posterior, cerrar conexión y marcar BD indisponible
         try:
