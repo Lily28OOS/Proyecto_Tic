@@ -9,9 +9,11 @@ from retinaface import RetinaFace
 # CONFIGURACIÓN GENERAL (UMBRAL ESTRICTO)
 # ============================================================
 
-MIN_FACE_SIZE = 90               # píxeles mínimos (ancho o alto)
-MIN_RETINAFACE_SCORE = 0.95      # detección MUY estricta
-MIN_LAPLACIAN_VAR = 100.0        # nitidez mínima (blur detection)
+MIN_FACE_SIZE = 60               # píxeles mínimos
+# Umbral de score en RetinaFace: reducido para evitar falsos negativos
+MIN_RETINAFACE_SCORE = 0.75      # detección menos estricta
+# Umbral de varianza Laplaciana reducido para aceptar rostros ligeramente borrosos
+MIN_LAPLACIAN_VAR = 50.0        # nitidez mínima
 
 # Nota:
 # Para ArcFace con embeddings normalizados:
