@@ -12,6 +12,7 @@ import uvicorn
 import json
 import re
 import os
+import hnswlib
 
 # --- Helpers mínimos (español) --- #
 def _get_id_from_row(row):
