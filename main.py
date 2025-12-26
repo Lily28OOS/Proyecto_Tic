@@ -20,8 +20,8 @@ from database import (
 # CONFIGURACIÓN GLOBAL
 # ============================================================
 
-THRESHOLD_RECOGNITION = 0.40   # estricto
-THRESHOLD_REGISTER = 0.30      # más estricto
+THRESHOLD_RECOGNITION = 0.90   # estricto
+THRESHOLD_REGISTER = 0.50      # más estricto
 
 app = FastAPI(title="API Reconocimiento Facial - UTM")
 
