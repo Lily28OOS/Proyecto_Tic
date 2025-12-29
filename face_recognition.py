@@ -1,25 +1,16 @@
 # face_recognition.py
-
 import cv2
 import numpy as np
 from deepface import DeepFace
 from retinaface import RetinaFace
 
 # ============================================================
-# CONFIGURACIÓN GENERAL (UMBRAL ESTRICTO)
+# CONFIGURACIÓN GENERAL
 # ============================================================
 
-MIN_FACE_SIZE = 60               # píxeles mínimos
-# Umbral de score en RetinaFace: reducido para evitar falsos negativos
-MIN_RETINAFACE_SCORE = 0.75      # detección menos estricta
-# Umbral de varianza Laplaciana reducido para aceptar rostros ligeramente borrosos
-MIN_LAPLACIAN_VAR = 50.0        # nitidez mínima
-
-# Nota:
-# Para ArcFace con embeddings normalizados:
-# - SAME PERSON  : cosine similarity >= 0.70
-# - DIFFERENT    : < 0.70
-# Este umbral se aplicará en el módulo de comparación / BD
+MIN_FACE_SIZE = 50                # píxeles mínimos del rostro
+MIN_RETINAFACE_SCORE = 0.60       # score mínimo de detección
+MIN_LAPLACIAN_VAR = 20.0          # nitidez mínima aceptable
 
 # ============================================================
 # CARGA DEL MODELO ARCFACE (UNA SOLA VEZ)
@@ -32,6 +23,41 @@ try:
 except Exception as e:
     print(f"[ERROR] No se pudo cargar ArcFace: {e}")
     ARC_MODEL = None
+
+
+# ============================================================
+# MEJORA DE CALIDAD DE IMAGEN (PREPROCESAMIENTO)
+# ============================================================
+
+def enhance_image_quality(frame):
+    """
+    Mejora iluminación, contraste y reduce ruido.
+    Ideal para cámaras web o celulares.
+    """
+    try:
+        if frame is None:
+            return None
+
+        # Convertir a YCrCb
+        ycrcb = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
+        y, cr, cb = cv2.split(ycrcb)
+
+        # Ecualización adaptativa (CLAHE)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        y_eq = clahe.apply(y)
+
+        # Reconstruir imagen
+        ycrcb_eq = cv2.merge((y_eq, cr, cb))
+        enhanced = cv2.cvtColor(ycrcb_eq, cv2.COLOR_YCrCb2BGR)
+
+        # Suavizado ligero
+        enhanced = cv2.GaussianBlur(enhanced, (3, 3), 0)
+
+        return enhanced
+
+    except Exception as e:
+        print(f"[ERROR] enhance_image_quality: {e}")
+        return frame
 
 
 # ============================================================
@@ -48,59 +74,40 @@ def is_face_sharp(face_img):
 
 
 # ============================================================
-# DETECCIÓN FACIAL CON RETINAFACE (OPTIMIZADA + FILTROS)
+# DETECCIÓN FACIAL CON RETINAFACE
 # ============================================================
 
-def detect_face_retina(frame, target_width=320):
-    """
-    Detecta un solo rostro usando RetinaFace.
-    Aplica filtros estrictos de calidad.
-    Devuelve rostro recortado (BGR) o None.
-    """
+def detect_face_retina(frame):
     try:
         if frame is None:
             return None
 
-        img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # Reducir tamaño SOLO para detección (mejora RetinaFace)
+        h, w = frame.shape[:2]
+        scale = 640 / max(h, w)
+        resized = cv2.resize(frame, (int(w * scale), int(h * scale)))
 
-        h, w = img_rgb.shape[:2]
-        ratio = target_width / w
-        resized = cv2.resize(img_rgb, (target_width, int(h * ratio)))
+        img_rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        faces = RetinaFace.detect_faces(img_rgb)
 
-        faces = RetinaFace.detect_faces(resized)
         if not isinstance(faces, dict) or len(faces) == 0:
             return None
 
-        # Seleccionar rostro con mayor score
-        best_face = max(
-            faces.values(),
-            key=lambda x: x.get("score", 0)
-        )
-
+        best_face = max(faces.values(), key=lambda x: x.get("score", 0))
         score = best_face.get("score", 0)
-        if score < MIN_RETINAFACE_SCORE:
+
+        if score < 0.55:  # más tolerante
             return None
 
         x1, y1, x2, y2 = best_face["facial_area"]
 
-        # Escalar coordenadas al tamaño original
-        scale_x = w / resized.shape[1]
-        scale_y = h / resized.shape[0]
-
-        x1 = int(x1 * scale_x)
-        x2 = int(x2 * scale_x)
-        y1 = int(y1 * scale_y)
-        y2 = int(y2 * scale_y)
+        # Reescalar coordenadas al frame original
+        inv = 1 / scale
+        x1, y1, x2, y2 = map(lambda v: int(v * inv), (x1, y1, x2, y2))
 
         face = frame[y1:y2, x1:x2]
+
         if face.size == 0:
-            return None
-
-        fh, fw = face.shape[:2]
-        if fh < MIN_FACE_SIZE or fw < MIN_FACE_SIZE:
-            return None
-
-        if not is_face_sharp(face):
             return None
 
         return face
@@ -152,19 +159,19 @@ def get_face_embedding(face_img):
 
 
 # ============================================================
-# PIPELINE PRINCIPAL (FASTAPI / BACKEND)
+# PIPELINE PRINCIPAL (REGISTRO / RECONOCIMIENTO)
 # ============================================================
 
 def extract_face_descriptor(frame):
     """
-    Pipeline completo y estricto:
-    1. Detecta rostro válido
-    2. Verifica calidad
-    3. Extrae embedding ArcFace
-
-    Retorna embedding normalizado o None
+    Pipeline REALISTA:
+    - Registro: permisivo
+    - Reconocimiento: estricto (se controla afuera)
     """
-    face = detect_face_retina(frame)
+
+    enhanced = enhance_image_quality(frame)
+    face = detect_face_retina(enhanced)
+
     if face is None:
         return None
 

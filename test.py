@@ -45,6 +45,7 @@ HTML_PAGE = f"""<!DOCTYPE html>
   <button id="registerBtn">Registrar Rostro</button>
   <button id="recognizeBtn">Reconocer Rostro</button>
   <button id="accessBtn">Verificar Acceso</button>
+  <button id="realtimeBtn">Reconocimiento en Tiempo Real</button>
 </div>
 
 <pre id="responseBox">Esperando acción...</pre>
@@ -60,10 +61,12 @@ const cameraBtn = document.getElementById("cameraBtn");
 
 let stream = null;
 let mirrorMode = false;
+let realtimeActive = false;
+let realtimeInterval = null;
 
-// ============================
+// ============================================================
 // CÁMARA
-// ============================
+// ============================================================
 async function startCamera() {{
   if (!stream) {{
     try {{
@@ -87,9 +90,9 @@ function stopCamera() {{
 
 cameraBtn.onclick = () => stream ? stopCamera() : startCamera();
 
-// ============================
+// ============================================================
 // CAPTURA DE IMAGEN
-// ============================
+// ============================================================
 async function captureImage() {{
   ctx.save();
   if (mirrorMode) {{
@@ -104,9 +107,9 @@ async function captureImage() {{
   }});
 }}
 
-// ============================
+// ============================================================
 // POST A LA API
-// ============================
+// ============================================================
 async function postImage(url, blob, extraData={{}}) {{
   if (!blob) {{
     responseBox.textContent = "❌ No se pudo capturar la imagen";
@@ -131,7 +134,6 @@ async function postImage(url, blob, extraData={{}}) {{
       return null;
     }}
 
-    responseBox.textContent = JSON.stringify(data, null, 2);
     return data;
 
   }} catch (err) {{
@@ -140,9 +142,43 @@ async function postImage(url, blob, extraData={{}}) {{
   }}
 }}
 
-// ============================
+// ============================================================
+// RECONOCIMIENTO EN TIEMPO REAL
+// ============================================================
+async function startRealtimeRecognition() {{
+  await startCamera();
+
+  realtimeInterval = setInterval(async () => {{
+    if (!stream) return;
+
+    const blob = await captureImage();
+    const result = await postImage(`${{API_BASE}}/recognize/`, blob);
+
+    if (!result) return;
+
+    if (result.recognized) {{
+      responseBox.textContent =
+        "🟢 ROSTRO RECONOCIDO\\n" +
+        `Cédula: ${{result.cedula}}\\n` +
+        `Nombre: ${{result.nombre1}} ${{result.apellido1}}\\n` +
+        `Distancia: ${{result.distance}}`;
+    }} else {{
+      responseBox.textContent = "🔴 Rostro no reconocido";
+    }}
+  }}, 1000); // cada 1 segundo
+}}
+
+function stopRealtimeRecognition() {{
+  clearInterval(realtimeInterval);
+  realtimeInterval = null;
+  realtimeActive = false;
+  document.getElementById("realtimeBtn").textContent =
+    "Reconocimiento en Tiempo Real";
+}}
+
+// ============================================================
 // BOTONES
-// ============================
+// ============================================================
 document.getElementById("registerBtn").onclick = async () => {{
   const cedula = cedulaInput.value.trim();
   if (!cedula) {{
@@ -152,13 +188,21 @@ document.getElementById("registerBtn").onclick = async () => {{
 
   await startCamera();
   const blob = await captureImage();
-  await postImage(`${{API_BASE}}/register/`, blob, {{ cedula }});
+  const res = await postImage(`${{API_BASE}}/register/`, blob, {{ cedula }});
+
+  if (res) {{
+    responseBox.textContent = "✅ Rostro registrado correctamente";
+  }}
 }};
 
 document.getElementById("recognizeBtn").onclick = async () => {{
   await startCamera();
   const blob = await captureImage();
-  await postImage(`${{API_BASE}}/recognize/`, blob);
+  const res = await postImage(`${{API_BASE}}/recognize/`, blob);
+
+  if (res) {{
+    responseBox.textContent = JSON.stringify(res, null, 2);
+  }}
 }};
 
 document.getElementById("accessBtn").onclick = async () => {{
@@ -184,6 +228,17 @@ document.getElementById("accessBtn").onclick = async () => {{
       `Distancia: ${{result.distance}}`;
   }} else {{
     responseBox.textContent = "❌ La cédula no coincide con el rostro";
+  }}
+}};
+
+document.getElementById("realtimeBtn").onclick = async () => {{
+  if (!realtimeActive) {{
+    realtimeActive = true;
+    document.getElementById("realtimeBtn").textContent =
+      "Detener Reconocimiento";
+    await startRealtimeRecognition();
+  }} else {{
+    stopRealtimeRecognition();
   }}
 }};
 
