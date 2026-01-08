@@ -133,8 +133,8 @@ def get_face_embedding(face_img):
         face_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
 
         rep = DeepFace.represent(
-            img=face_rgb,
-            model=ARC_MODEL,
+            face_rgb,
+            model_name="ArcFace",
             enforce_detection=False,
             detector_backend="skip"
         )
