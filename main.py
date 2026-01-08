@@ -1,11 +1,12 @@
 # main.py
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
-from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
-from io import BytesIO
-from PIL import Image
 import uvicorn
 import threading
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
+from register import FaceRegister
+from io import BytesIO
+from PIL import Image
 
 from face_recognition import extract_face_descriptor
 from database import (
