@@ -77,7 +77,7 @@ def close_db(conn, cur) -> None:
 # =====================================================
 def get_person_by_cedula(c, cedula: str) -> Optional[Dict]:
     c.execute(
-        "SELECT * FROM personas WHERE cedula = %s AND activo = TRUE",
+        "SELECT * FROM personas WHERE cedula = %s ",
         (cedula,)
     )
     row = c.fetchone()
