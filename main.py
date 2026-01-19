@@ -2,13 +2,13 @@
 import numpy as np
 import uvicorn
 import threading
+from face_recognition import extract_face_descriptor
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from register import FaceRegister
 from io import BytesIO
 from PIL import Image
 
-from face_recognition import extract_face_descriptor
 from database import (
     connect_db,
     close_db,
@@ -101,38 +101,49 @@ async def register_face(
 
     try:
         img = Image.open(BytesIO(content)).convert("RGB")
-        frame = np.array(img)[:, :, ::-1]  # RGB → BGR
+        frame = np.array(img)[:, :, ::-1]
     except Exception:
         raise HTTPException(status_code=400, detail="Imagen inválida")
-
-    descriptor = extract_face_descriptor(frame)
-    if descriptor is None:
-        raise HTTPException(status_code=400, detail="No se pudo extraer rostro")
-
-    # Verificar duplicados
-    with face_db_lock:
-        for _, _, existing in face_db:
-            if compare_embeddings(existing, descriptor) < THRESHOLD_REGISTER:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Rostro ya registrado"
-                )
 
     conn, c = None, None
     try:
         conn, c = connect_db()
-        persona = get_person_by_cedula(c, cedula)
 
+        # 1️⃣ Buscar persona
+        persona = get_person_by_cedula(c, cedula)
         if not persona:
             raise HTTPException(
                 status_code=404,
                 detail="Persona no encontrada en la base institucional"
             )
 
-        ok = save_face_descriptor(c, conn, persona["id"], descriptor)
-        if not ok:
-            raise HTTPException(status_code=500, detail="Error al guardar descriptor")
+        # 2️⃣ Registro biométrico
+        with face_db_lock:
+            registrar = FaceRegister(
+                cursor=c,
+                connection=conn,
+                face_db=[(pid, emb) for pid, _, emb in face_db]
+            )
 
+            result = registrar.register_face(
+                persona_id=persona["id"],
+                frame=frame,
+                modelo="ArcFace",
+                version_modelo="1.0"
+            )
+
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result["message"])
+
+        # 3️⃣ ACTIVAR PERSONA (regla de negocio)
+        c.execute(
+            "UPDATE personas SET activo = TRUE WHERE id = %s",
+            (persona["id"],)
+        )
+        conn.commit()
+
+        # 4️⃣ Recargar rostro recién creado en memoria
+        descriptor = extract_face_descriptor(frame)
         with face_db_lock:
             face_db.append((persona["id"], cedula, descriptor))
 
@@ -179,7 +190,8 @@ async def recognize_face(file: UploadFile = File(...)):
             "confidence": 0.0
         }
 
-    confidence = distance_to_confidence(best_dist, THRESHOLD_RECOGNITION)
+    confidence = float(distance_to_confidence(best_dist, THRESHOLD_RECOGNITION))
+    best_dist = float(best_dist)
 
     conn, c = None, None
     try:
