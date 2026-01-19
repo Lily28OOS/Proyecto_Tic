@@ -6,10 +6,10 @@ import socket
 # ============================================================
 # CONFIGURACIÓN
 # ============================================================
-API_BASE = "http://localhost:8000"
+API_BASE = "http://localhost:8000"   # ✅ FastAPI (NO cambiar)
 VIDEO_WIDTH = 720
 VIDEO_HEIGHT = 650
-PORT = 8080
+PORT = 8080                         # ✅ HTML
 
 # ============================================================
 # HTML DE PRUEBAS
@@ -63,6 +63,7 @@ let stream = null;
 let mirrorMode = false;
 let realtimeActive = false;
 let realtimeInterval = null;
+let startTime = 0;
 
 // ============================================================
 // CÁMARA
@@ -151,6 +152,7 @@ async function startRealtimeRecognition() {{
   realtimeInterval = setInterval(async () => {{
     if (!stream) return;
 
+    startTime = performance.now();
     const blob = await captureImage();
     const result = await postImage(`${{API_BASE}}/recognize/`, blob);
 
@@ -160,12 +162,12 @@ async function startRealtimeRecognition() {{
       responseBox.textContent =
         "🟢 ROSTRO RECONOCIDO\\n" +
         `Cédula: ${{result.cedula}}\\n` +
-        `Nombre: ${{result.nombre1}} ${{result.apellido1}}\\n` +
-        `Distancia: ${{result.distance}}`;
+        `Nombre: ${{result.nombre}} ${{result.apellido}}\\n` +
+        `Distancia: ${{result.distance}}` + getTimer();
     }} else {{
-      responseBox.textContent = "🔴 Rostro no reconocido";
+      responseBox.textContent = "🔴 Rostro no reconocido" + getTimer();
     }}
-  }}, 1000); // cada 1 segundo
+  }}, 1000);
 }}
 
 function stopRealtimeRecognition() {{
@@ -176,10 +178,21 @@ function stopRealtimeRecognition() {{
     "Reconocimiento en Tiempo Real";
 }}
 
+function startTimer(message) {{
+  startTime = performance.now();
+  responseBox.textContent = message;
+}}
+
+function getTimer() {{
+  const elapsed = performance.now() - startTime;
+  return `\\n⏱ Tiempo: ${{elapsed.toFixed(0)}} ms (${{(elapsed / 1000).toFixed(2)}} s)`;
+}}
+
 // ============================================================
 // BOTONES
 // ============================================================
 document.getElementById("registerBtn").onclick = async () => {{
+  startTimer("⏳ Registrando rostro, espere por favor...");
   const cedula = cedulaInput.value.trim();
   if (!cedula) {{
     alert("Ingrese una cédula válida");
@@ -191,21 +204,23 @@ document.getElementById("registerBtn").onclick = async () => {{
   const res = await postImage(`${{API_BASE}}/register/`, blob, {{ cedula }});
 
   if (res) {{
-    responseBox.textContent = "✅ Rostro registrado correctamente";
+    responseBox.textContent = "✅ Rostro registrado correctamente" + getTimer();
   }}
 }};
 
 document.getElementById("recognizeBtn").onclick = async () => {{
+  startTimer("⏳ Reconociendo rostro, espere por favor...");
   await startCamera();
   const blob = await captureImage();
   const res = await postImage(`${{API_BASE}}/recognize/`, blob);
 
   if (res) {{
-    responseBox.textContent = JSON.stringify(res, null, 2);
+    responseBox.textContent = JSON.stringify(res, null, 2) + getTimer();
   }}
 }};
 
 document.getElementById("accessBtn").onclick = async () => {{
+  startTimer("⏳ Verificando acceso, espere por favor...");
   const cedulaIngresada = cedulaInput.value.trim();
   if (!cedulaIngresada) {{
     alert("Ingrese la cédula");
@@ -217,17 +232,17 @@ document.getElementById("accessBtn").onclick = async () => {{
   const result = await postImage(`${{API_BASE}}/recognize/`, blob);
 
   if (!result || !result.recognized) {{
-    responseBox.textContent = "❌ Rostro no reconocido";
+    responseBox.textContent = "❌ Rostro no reconocido" + getTimer();
     return;
   }}
 
   if (result.cedula === cedulaIngresada) {{
     responseBox.textContent =
       "✅ ACCESO PERMITIDO\\n" +
-      `Nombre: ${{result.nombre1}} ${{result.apellido1}}\\n` +
+      `Nombre: ${{result.nombre}} ${{result.apellido}}\\n` +
       `Distancia: ${{result.distance}}`;
   }} else {{
-    responseBox.textContent = "❌ La cédula no coincide con el rostro";
+    responseBox.textContent = "❌ La cédula no coincide con el rostro" + getTimer();
   }}
 }};
 
