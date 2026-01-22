@@ -53,7 +53,8 @@ def init_pool() -> None:
         user=DB_USER,
         password=DB_PASS,
         host=DB_HOST,
-        port=DB_PORT
+        port=DB_PORT,
+        client_encoding='UTF8'
     )
     logger.info("Pool DB inicializado")
 
@@ -202,9 +203,19 @@ def load_faces_from_db(c) -> List[Tuple[int, str, np.ndarray]]:
 
     rows = []
     for r in c.fetchall():
-        emb = np.array(r["codificacion"], dtype=np.float32)
-        emb /= np.linalg.norm(emb)
-        rows.append((r["persona_id"], r["cedula"], emb))
+        try:
+            # Asegurar que la cédula sea string UTF-8
+            cedula = str(r["cedula"]) if r["cedula"] else ""
+            
+            # Procesar el embedding
+            emb = np.array(r["codificacion"], dtype=np.float32)
+            norm = np.linalg.norm(emb)
+            if norm > 0:
+                emb = emb / norm
+                rows.append((r["persona_id"], cedula, emb))
+        except Exception as e:
+            logger.warning(f"Error procesando rostro ID {r.get('persona_id')}: {e}")
+            continue
 
     logger.info("Rostros cargados: %d", len(rows))
     return rows

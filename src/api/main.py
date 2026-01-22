@@ -2,6 +2,7 @@
 import numpy as np
 import uvicorn
 import threading
+from contextlib import asynccontextmanager
 from src.core.face_recognition import extract_face_descriptor
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,30 +26,18 @@ from src.config.settings import app_config, recognition_config
 THRESHOLD_RECOGNITION = recognition_config.THRESHOLD_RECOGNITION
 THRESHOLD_REGISTER = recognition_config.THRESHOLD_REGISTER
 
-app = FastAPI(
-    title=app_config.TITLE,
-    version=app_config.VERSION
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=app_config.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # Base facial en memoria
 # Estructura: [(persona_id, cedula, embedding)]
 face_db = []
 face_db_lock = threading.Lock()
 
 # ============================================================
-# STARTUP / SHUTDOWN
+# LIFESPAN EVENTS (reemplaza on_event)
 # ============================================================
 
-@app.on_event("startup")
-async def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
     global face_db
     conn, c = None, None
 
@@ -71,11 +60,26 @@ async def startup():
 
     finally:
         close_db(conn, c)
-
-
-@app.on_event("shutdown")
-async def shutdown():
+    
+    yield  # Aplicación en ejecución
+    
+    # Shutdown
     print("[INFO] API detenida correctamente")
+
+
+app = FastAPI(
+    title=app_config.TITLE,
+    version=app_config.VERSION,
+    lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=app_config.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ============================================================
 # UTILIDADES BIOMÉTRICAS
