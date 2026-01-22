@@ -73,12 +73,23 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Configuración CORS estricta para producción
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=app_config.CORS_ORIGINS,
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
+
+# Configuración CORS más permisiva para desarrollo
 app.add_middleware(
     CORSMiddleware,
     allow_origins=app_config.CORS_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 # ============================================================

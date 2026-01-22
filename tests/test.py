@@ -6,10 +6,10 @@ import socket
 # ============================================================
 # CONFIGURACIÓN
 # ============================================================
-API_BASE = "http://localhost:8000"   # ✅ FastAPI (NO cambiar)
+API_BASE = "http://localhost:8000"   # FastAPI (NO cambiar)
 VIDEO_WIDTH = 720
 VIDEO_HEIGHT = 650
-PORT = 8080                         # ✅ HTML
+PORT = 8080                         # HTML
 
 # ============================================================
 # HTML DE PRUEBAS
@@ -20,11 +20,13 @@ HTML_PAGE = f"""<!DOCTYPE html>
   <meta charset="UTF-8">
   <title>Pruebas de Reconocimiento Facial</title>
   <style>
-    body {{ font-family: Arial, sans-serif; }}
+    body {{ font-family: Arial, sans-serif; padding: 20px; }}
     video, canvas {{ border: 1px solid #333; display: block; margin-bottom: 10px; }}
     button {{ margin-right: 10px; margin-bottom: 10px; padding: 8px 12px; }}
-    input {{ margin-bottom: 10px; padding: 6px; width: 260px; }}
+    input, select {{ margin-bottom: 10px; padding: 6px; width: 260px; }}
     pre {{ background: #f4f4f4; padding: 10px; min-height: 120px; }}
+    .camera-controls {{ margin-bottom: 15px; }}
+    select {{ cursor: pointer; }}
   </style>
 </head>
 <body>
@@ -32,6 +34,13 @@ HTML_PAGE = f"""<!DOCTYPE html>
 <h1>Pruebas de Reconocimiento Facial</h1>
 
 <input id="cedulaInput" type="text" placeholder="Ingrese cédula registrada" />
+
+<div class="camera-controls">
+  <label for="cameraSelect">Seleccionar Cámara:</label>
+  <select id="cameraSelect">
+    <option value="">Cargando cámaras...</option>
+  </select>
+</div>
 
 <video id="video" width="{VIDEO_WIDTH}" height="{VIDEO_HEIGHT}" autoplay></video>
 <canvas id="canvas" width="{VIDEO_WIDTH}" height="{VIDEO_HEIGHT}" style="display:none;"></canvas>
@@ -58,12 +67,51 @@ const ctx = canvas.getContext("2d");
 const responseBox = document.getElementById("responseBox");
 const cedulaInput = document.getElementById("cedulaInput");
 const cameraBtn = document.getElementById("cameraBtn");
+const cameraSelect = document.getElementById("cameraSelect");
 
 let stream = null;
 let mirrorMode = false;
 let realtimeActive = false;
 let realtimeInterval = null;
 let startTime = 0;
+let videoDevices = [];
+
+// ============================================================
+// ENUMERAR CÁMARAS DISPONIBLES
+// ============================================================
+async function listCameras() {{
+  try {{
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    videoDevices = devices.filter(device => device.kind === 'videoinput');
+    
+    cameraSelect.innerHTML = '';
+    
+    if (videoDevices.length === 0) {{
+      cameraSelect.innerHTML = '<option value="">No se encontraron cámaras</option>';
+      return;
+    }}
+    
+    videoDevices.forEach((device, index) => {{
+      const option = document.createElement('option');
+      option.value = device.deviceId;
+      option.text = device.label || `Cámara ${{index + 1}}`;
+      cameraSelect.appendChild(option);
+    }});
+    
+    responseBox.textContent = `${{videoDevices.length}} cámara(s) detectada(s)`;
+  }} catch (err) {{
+    console.error('Error listando cámaras:', err);
+    cameraSelect.innerHTML = '<option value="">Error al listar cámaras</option>';
+  }}
+}}
+
+// Cambiar cámara cuando se selecciona otra del dropdown
+cameraSelect.onchange = async () => {{
+  if (stream) {{
+    stopCamera();
+    await startCamera();
+  }}
+}};
 
 // ============================================================
 // CÁMARA
@@ -71,11 +119,60 @@ let startTime = 0;
 async function startCamera() {{
   if (!stream) {{
     try {{
-      stream = await navigator.mediaDevices.getUserMedia({{ video: true }});
+      // Verificar si el navegador soporta getUserMedia
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {{
+        alert("Tu navegador no soporta acceso a la cámara");
+        return;
+      }}
+
+      // Obtener el deviceId seleccionado
+      const selectedDeviceId = cameraSelect.value;
+      
+      // Configuración de video
+      const constraints = {{ 
+        video: {{ 
+          width: {{ ideal: {VIDEO_WIDTH} }},
+          height: {{ ideal: {VIDEO_HEIGHT} }}
+        }} 
+      }};
+      
+      // Si hay un dispositivo específico seleccionado, usarlo
+      if (selectedDeviceId) {{
+        constraints.video.deviceId = {{ exact: selectedDeviceId }};
+      }}
+
+      // Solicitar acceso a la cámara
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      
       video.srcObject = stream;
       cameraBtn.textContent = "Detener Cámara";
+      
+      // Actualizar la lista de cámaras con labels reales
+      await listCameras();
+      
+      const selectedCamera = videoDevices.find(d => d.deviceId === selectedDeviceId);
+      const cameraName = selectedCamera ? selectedCamera.label : "Cámara predeterminada";
+      responseBox.textContent = `Cámara activada: ${{cameraName}}`;
+      
     }} catch (err) {{
-      alert("No se pudo acceder a la cámara");
+      let errorMsg = "❌ Error al acceder a la cámara:\\n\\n";
+      
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {{
+        errorMsg += "Permisos denegados. Por favor:\\n";
+        errorMsg += "1. Haz clic en el candado en la barra de direcciones\\n";
+        errorMsg += "2. Permite el acceso a la cámara\\n";
+        errorMsg += "3. Recarga la página";
+      }} else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {{
+        errorMsg += "No se encontró ninguna cámara conectada";
+      }} else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {{
+        errorMsg += "La cámara está siendo usada por otra aplicación\\n";
+        errorMsg += "Cierra otras apps que usen la cámara (Zoom, Teams, etc.)";
+      }} else {{
+        errorMsg += err.message || "Error desconocido";
+      }}
+      
+      responseBox.textContent = errorMsg;
+      alert(errorMsg);
     }}
   }}
 }}
@@ -86,8 +183,10 @@ function stopCamera() {{
     video.srcObject = null;
     stream = null;
     cameraBtn.textContent = "Activar Cámara";
+    responseBox.textContent = "Cámara detenida";
   }}
 }}
+
 
 cameraBtn.onclick = () => stream ? stopCamera() : startCamera();
 
@@ -263,6 +362,12 @@ document.getElementById("mirrorBtn").onclick = () => {{
   document.getElementById("mirrorBtn").textContent =
     mirrorMode ? "Modo Espejo: ON" : "Modo Espejo: OFF";
 }};
+
+// ============================================================
+// INICIALIZACIÓN
+// ============================================================
+// Cargar lista de cámaras al inicio
+listCameras();
 </script>
 
 </body>
