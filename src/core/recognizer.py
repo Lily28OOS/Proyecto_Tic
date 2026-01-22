@@ -1,10 +1,11 @@
-# app.py - utilidades para reconocimiento facial
+# recognizer.py - utilidades para reconocimiento facial
 # No ejecutar este archivo directamente; el entrypoint es main.py
 
 import cv2
 import numpy as np
-from face_recognition import extract_face_descriptor
-from database import connect_db, load_faces_from_db, close_db
+from src.core.face_recognition import extract_face_descriptor
+from src.models.database import connect_db, load_faces_from_db, close_db
+from src.config.settings import recognition_config
 
 class FaceRecognizer:
     def __init__(self):
@@ -21,12 +22,9 @@ class FaceRecognizer:
         self.face_db = []
         self._load_faces()
 
-        # Umbral estricto (ArcFace + embeddings normalizados)
-        # Valores típicos:
-        # 0.6 - muy estricto
-        # 0.65 - estricto (recomendado)
-        # 0.75 - permisivo
-        self.MATCH_THRESHOLD = 0.65
+        # Umbral desde configuración
+        self.MATCH_THRESHOLD = recognition_config.MATCH_THRESHOLD
+        self.MAX_IMAGE_WIDTH = recognition_config.MAX_IMAGE_WIDTH
 
     # ============================================================
     # UTILIDADES

@@ -46,9 +46,45 @@ API web (FastAPI) para registro y reconocimiento facial. Permite sincronizar usu
      $env:DB_NAME="biometria"; $env:DB_USER="postgres"; $env:DB_PASS="admin"; $env:DB_HOST="localhost"; $env:DB_PORT="5433"
 
 5. Ejecutar la aplicación (inicializará tablas si es necesario):
-   - uvicorn main:app --reload
-   - o: python main.py
+   - python run.py
+   - o: uvicorn src.api.main:app --reload
 
+## Estructura del proyecto
+```
+Proyecto_Tic/
+├── src/                      # Código fuente principal
+│   ├── __init__.py
+│   ├── api/                  # API FastAPI
+│   │   ├── __init__.py
+│   │   └── main.py          # Entrypoint de la API con endpoints
+│   ├── core/                 # Lógica de negocio
+│   │   ├── __init__.py
+│   │   ├── face_recognition.py  # Extracción de descriptores
+│   │   ├── recognizer.py    # Reconocimiento facial
+│   │   └── register.py      # Registro biométrico
+│   ├── models/               # Modelos y base de datos
+│   │   ├── __init__.py
+│   │   └── database.py      # Operaciones de BD
+│   ├── config/               # Configuración
+│   │   ├── __init__.py
+│   │   └── settings.py      # Variables de entorno y config
+│   └── utils/                # Utilidades auxiliares
+│       └── __init__.py
+├── tests/                    # Archivos de prueba
+│   └── test.py              # Interfaz HTML de pruebas
+├── scripts/                  # Scripts utilitarios
+│   └── data.py              # Script para poblar datos
+├── docs/                     # Documentación
+│   ├── biometria.sql        # Script SQL de BD
+│   ├── biometria 2.sql
+│   └── *.pgerd              # Diagramas ER
+├── data/                     # Datos de ejemplo
+│   └── *.csv
+├── run.py                    # Punto de entrada principal
+├── requirements.txt
+├── README.md
+└── .venv/                    # Entorno virtual
+```
 ## Uso (endpoints principales)
 - Sincronizar usuario desde API externa (recibe idPersonal):
   - POST /sync_user/ form-data: idpersonal=81427
@@ -69,22 +105,11 @@ API web (FastAPI) para registro y reconocimiento facial. Permite sincronizar usu
   - http://localhost:8000/docs
   - http://localhost:8000/redoc
 
-## Estructura del proyecto
-Proyecto_Tic
-├── .venv
-├── app.py
-├── database.py
-├── face_recognition.py
-├── main.py         # entrypoint principal (FastAPI)
-├── register.py
-├── README.md
-├── requirements.txt
-└── ...
-
 ## Notas importantes
 - El campo `idPersonal` de la API externa no es la cédula; la API externa debe devolver la `cedula` en la respuesta para crear la persona local. El flujo es: sync (/sync_user) por idPersonal → guarda metadata y `cedula` → luego register/recognize usan la `cedula` local.
 - Asegúrate de que las funciones detect_faces() y get_face_descriptor() en `face_recognition.py` devuelvan formatos compatibles (listas o numpy arrays).
 - En producción revisa CORS y límites de subida de archivos, y configura el pool de conexiones según la carga.
+- La configuración del proyecto se centraliza en `src/config/settings.py` usando variables de entorno.
 
 ## Créditos
 Delgado Benavides y Farias Palma.

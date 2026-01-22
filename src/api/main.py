@@ -2,33 +2,37 @@
 import numpy as np
 import uvicorn
 import threading
-from face_recognition import extract_face_descriptor
+from src.core.face_recognition import extract_face_descriptor
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from register import FaceRegister
+from src.core.register import FaceRegister
 from io import BytesIO
 from PIL import Image
 
-from database import (
+from src.models.database import (
     connect_db,
     close_db,
     load_faces_from_db,
     get_person_by_cedula,
     save_face_descriptor
 )
+from src.config.settings import app_config, recognition_config
 
 # ============================================================
 # CONFIGURACIÓN GLOBAL
 # ============================================================
 
-THRESHOLD_RECOGNITION = 0.90   # estricto
-THRESHOLD_REGISTER = 0.50      # más estricto
+THRESHOLD_RECOGNITION = recognition_config.THRESHOLD_RECOGNITION
+THRESHOLD_REGISTER = recognition_config.THRESHOLD_REGISTER
 
-app = FastAPI(title="API Reconocimiento Facial - UTM")
+app = FastAPI(
+    title=app_config.TITLE,
+    version=app_config.VERSION
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=app_config.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -1,7 +1,8 @@
 # register.py
 import numpy as np
 from psycopg2.extras import Json
-from face_recognition import extract_face_descriptor
+from src.core.face_recognition import extract_face_descriptor
+from src.config.settings import recognition_config
 
 
 class FaceRegister:
@@ -15,8 +16,6 @@ class FaceRegister:
     - Activar persona
     """
 
-    FACE_DUPLICATE_THRESHOLD = 0.50
-
     def __init__(self, cursor, connection, face_db):
         """
         :param cursor: cursor PostgreSQL
@@ -26,6 +25,7 @@ class FaceRegister:
         self.cursor = cursor
         self.connection = connection
         self.face_db = face_db
+        self.FACE_DUPLICATE_THRESHOLD = recognition_config.THRESHOLD_REGISTER
 
     # ---------------------------------------------------------
     # REGISTRO BIOMÉTRICO

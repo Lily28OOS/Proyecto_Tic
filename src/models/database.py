@@ -1,5 +1,4 @@
 # database.py
-import os
 import logging
 import requests
 import psycopg2
@@ -8,22 +7,24 @@ import psycopg2.pool
 import numpy as np
 from typing import Optional, Tuple, List, Dict, Any
 
-# =====================================================
-# CONFIGURACIÓN DB
-# =====================================================
-DB_NAME = os.getenv("DB_NAME", "biometria")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASS = os.getenv("DB_PASS", "admin")
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = int(os.getenv("DB_PORT", "5432"))
+from src.config.settings import db_config, api_config
 
-POOL_MINCONN = int(os.getenv("DB_POOL_MIN", "1"))
-POOL_MAXCONN = int(os.getenv("DB_POOL_MAX", "10"))
+# =====================================================
+# CONFIGURACIÓN DB (importada desde settings)
+# =====================================================
+DB_NAME = db_config.DB_NAME
+DB_USER = db_config.DB_USER
+DB_PASS = db_config.DB_PASS
+DB_HOST = db_config.DB_HOST
+DB_PORT = db_config.DB_PORT
+
+POOL_MINCONN = db_config.POOL_MINCONN
+POOL_MAXCONN = db_config.POOL_MAXCONN
 
 # =====================================================
 # CONFIG API EXTERNA
 # =====================================================
-API_PERSONA_URL = "http://172.16.226.42:3000/administracion/usuario/v1/buscar_por_idpersonal"
+API_PERSONA_URL = api_config.PERSONA_URL
 
 # =====================================================
 # LOGGER

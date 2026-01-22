@@ -1,13 +1,109 @@
-# Ignorar la carpeta venv
-<<<<<<< HEAD
-venv/
-=======
-.venv/
+# Python
 __pycache__/
->>>>>>> d161071 (actualizacion de comandos hecho desde el departamento de tic de la utm)
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Ignorar archivos grandes
+# Virtual Environment
+venv/
+.venv/
+ENV/
+env/
+.virtualenv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Testing
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+.cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Model files and large files
 *.pyd
 *.dll
 *.h5
 *.zip
+*.tar.gz
+*.pkl
+*.pickle
+*.bin
+*.pt
+*.pth
+face_index.bin
+
+# Data files (opcional, comentar si quieres versionar)
+# data/*.csv
+# data/*.json
+# data/*.txt
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# FastAPI / Uvicorn
+*.pid
+*.sock
