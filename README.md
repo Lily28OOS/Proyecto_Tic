@@ -12,13 +12,21 @@ API web (FastAPI) para registro y reconocimiento facial. Permite sincronizar usu
 - Base de datos PostgreSQL con tablas creadas automáticamente.
 
 ## Requisitos previos (importante)
-1. Instalar CMake (requisito para algunas dependencias nativas):
+1. Requisitos de hardware:
+   - Cámara o webcam básica para registrar y reconocer rostros.
+   - Procesador: mínimo de doble núcleo, como Intel Core 2 Duo o AMD Athlon X2; (recomendable Intel Core i5 / Ryzen 5 o superior).
+   - Memoria RAM: mínimo 4 GB; (recomendable 8 GB o más).
+   - Almacenamiento: mínimo 10 GB libres; (recomendable SSD de 120 GB o más).
+   - Gráfica/GPU: no es obligatoria; (recomendable una GPU discreta básica o integrada moderna para mejor rendimiento).
+   - Conexión estable a la base de datos PostgreSQL.
+
+2. Instalar CMake (requisito para algunas dependencias nativas):
    - Descarga: https://cmake.org/download/
    - En Windows con Chocolatey (PowerShell como administrador):  
      choco install cmake -y
    - Asegúrate de que `cmake` esté en el PATH antes de instalar dependencias Python.
 
-2. Tener PostgreSQL accesible y crear la base de datos (por ejemplo `biometria`) o ajustar variables de entorno para tu DB.
+3. Tener PostgreSQL accesible y crear la base de datos (por ejemplo `biometria`) o ajustar variables de entorno para tu DB.
 
 ## Tecnologías
 - Python 3.8+
