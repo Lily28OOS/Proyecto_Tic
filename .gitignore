@@ -3,6 +3,7 @@
 venv/
 =======
 .venv/
+__pycache__/
 >>>>>>> d161071 (actualizacion de comandos hecho desde el departamento de tic de la utm)
 
 # Ignorar archivos grandes
